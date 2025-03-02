@@ -1,7 +1,7 @@
 # wrangler.toml
 
 name = "group-project"                # 워커 이름 (원하는 대로)
-compatibility_date = "2025-3-2" # 아무 날짜나 지정 (필수)
+compatibility_date = "2025-03-02" # 아무 날짜나 지정 (필수)
 main = "worker.js"                # 여기서 진입점 지정
 
 # R2 바인딩 예시
