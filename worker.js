@@ -1,6 +1,6 @@
 // worker.js
 
-// 프로젝트 페이지에서 토큰(csrf-token, x-token) 자동 추출 함수 (HTML 구조에 맞게 정규표현식 수정 필요)
+// 프로젝트 페이지에서 토큰(csrf-token, x-token) 자동 추출 함수
 async function extractTokens(projectId) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
   console.log(`Fetching project page: ${projectUrl}`);
@@ -9,14 +9,17 @@ async function extractTokens(projectId) {
     throw new Error(`프로젝트 페이지(${projectUrl}) 요청 실패: ${res.status}`);
   }
   const html = await res.text();
-  console.log("HTML length:", html.length);
-  
-  // 예시 정규표현식: 실제 HTML 구조에 맞게 조정 필요합니다.
-  const csrfTokenMatch = html.match(/"csrf-token"\s*:\s*"([^"]+)"/);
-  const xTokenMatch = html.match(/"x-token"\s*:\s*"([^"]+)"/);
+  // HTML의 처음 500자를 로그로 출력해서 meta 태그 위치를 확인합니다.
+  console.log("HTML snippet:", html.substring(0, 500));
+
+  // meta 태그에서 토큰 추출 (예시)
+  // 예: <meta name="csrf-token" content="토큰값">
+  const csrfTokenMatch = html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/i);
+  // 예: <meta name="x-token" content="토큰값">
+  const xTokenMatch = html.match(/<meta\s+name=["']x-token["']\s+content=["']([^"']+)["']/i);
   console.log("csrfTokenMatch:", csrfTokenMatch);
   console.log("xTokenMatch:", xTokenMatch);
-  
+
   if (!csrfTokenMatch || !xTokenMatch) {
     throw new Error("토큰 추출에 실패했습니다. HTML 구조를 확인해보세요.");
   }
@@ -73,7 +76,7 @@ export default {
         }
         // 8자리(영문/숫자 조합) 그룹 코드 생성
         const code = Math.random().toString(36).substring(2, 10);
-        // R2 버킷 (PROJECT_GROUPS 바인딩) 에 그룹 정보 저장 (JSON 형태)
+        // R2 버킷 (PROJECT_GROUPS 바인딩)을 이용해 그룹 정보 저장 (JSON 형태)
         await env.PROJECT_GROUPS.put(code, JSON.stringify({ urls }));
         const domain = url.hostname;
         const responseHtml = `<!DOCTYPE html>
