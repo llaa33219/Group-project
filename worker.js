@@ -19,8 +19,39 @@ function getMetaToken(sanitizedHtml, tokenName) {
   return sanitizedHtml.match(regex);
 }
 
-// 프로젝트 페이지에서 토큰(csrf-token, x-token) 자동 추출 함수
-async function extractTokens(projectId) {
+// 전역 캐시 변수 (홈페이지에서 추출한 x-token)
+let cachedXToken = null;
+
+// 홈페이지에서 x-token을 추출하는 함수
+async function getXToken() {
+  if (cachedXToken !== null) {
+    return cachedXToken;
+  }
+  const homeUrl = "https://playentry.org/";
+  console.log(`Fetching homepage for x-token: ${homeUrl}`);
+  const res = await fetch(homeUrl, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+  if (!res.ok) {
+    console.error(`홈페이지 요청 실패: ${res.status}`);
+    cachedXToken = "";
+    return cachedXToken;
+  }
+  const html = await res.text();
+  const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+  const xTokenMatch = getMetaToken(sanitizedHtml, "x-token");
+  console.log("홈페이지 x-token match:", xTokenMatch);
+  cachedXToken = xTokenMatch ? xTokenMatch[1] : "";
+  return cachedXToken;
+}
+
+// 프로젝트 페이지에서 CSRF 토큰만 추출하는 함수
+async function extractCsrfToken(projectId) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
   console.log(`Fetching project page: ${projectUrl}`);
   const res = await fetch(projectUrl, {
@@ -35,27 +66,18 @@ async function extractTokens(projectId) {
     throw new Error(`프로젝트 페이지(${projectUrl}) 요청 실패: ${res.status}`);
   }
   const html = await res.text();
-  console.log("HTML snippet (first 500 chars):", html.substring(0, 500));
-
+  console.log("Project HTML snippet (first 500 chars):", html.substring(0, 500));
   // <script> 태그 제거
   const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-  
   const csrfTokenMatch = getMetaToken(sanitizedHtml, "csrf-token");
-  const xTokenMatch = getMetaToken(sanitizedHtml, "x-token");
-  console.log("csrfTokenMatch:", csrfTokenMatch);
-  console.log("xTokenMatch:", xTokenMatch);
-
-  if (!csrfTokenMatch || !xTokenMatch) {
-    // 토큰 추출 실패 시, 스크립트 태그 제거된 HTML 전체를 이스케이프하여 에러 메시지에 포함
+  console.log("CSRF token match:", csrfTokenMatch);
+  if (!csrfTokenMatch) {
     throw new Error(
-      "토큰 추출에 실패했습니다. HTML snippet:\n" +
+      "토큰 추출에 실패했습니다. CSRF 토큰을 찾을 수 없습니다. HTML snippet:\n" +
         escapeHtml(sanitizedHtml)
     );
   }
-  return {
-    csrfToken: csrfTokenMatch[1],
-    xToken: xTokenMatch[1],
-  };
+  return csrfTokenMatch[1];
 }
 
 export default {
@@ -125,10 +147,10 @@ export default {
         });
       } catch (err) {
         console.error("Error in /create:", err);
-        return new Response("그룹 생성 중 에러 발생: " + err.message, {
-          headers: { "Content-Type": "text/plain;charset=UTF-8" },
-          status: 500,
-        });
+        return new Response(
+          "그룹 생성 중 에러 발생: " + err.message,
+          { headers: { "Content-Type": "text/plain;charset=UTF-8" }, status: 500 }
+        );
       }
     }
 
@@ -150,20 +172,18 @@ export default {
           if (!match) continue;
           const projectId = match[1];
           try {
-            // 토큰 추출
-            const tokens = await extractTokens(projectId);
-            console.log(`Tokens for project ${projectId}:`, tokens);
-            // GraphQL 요청 본문 구성
+            // 각 프로젝트 페이지에서 CSRF 토큰 추출
+            const csrfToken = await extractCsrfToken(projectId);
+            // x-token은 홈페이지에서 수집 (캐시 사용)
+            const xToken = await getXToken();
+            console.log(`Tokens for project ${projectId}: csrf-token=${csrfToken}, x-token=${xToken}`);
+            // GraphQL 요청 본문 구성 (SELECT_PROJECT_LITE 사용)
             const graphqlBody = JSON.stringify({
               query: `
-                query SELECT_PROJECT($id: ID! $groupId: ID) {
+                query SELECT_PROJECT_LITE($id: ID! $groupId: ID) {
                   project(id: $id, groupId: $groupId) {
                     id
                     name
-                    thumb
-                    visit
-                    likeCnt
-                    comment
                     user {
                       id
                       nickname
@@ -171,6 +191,10 @@ export default {
                         filename
                       }
                     }
+                    thumb
+                    visit
+                    likeCnt
+                    comment
                   }
                 }
               `,
@@ -180,11 +204,12 @@ export default {
             const headers = {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": tokens.csrfToken,
-              "x-token": tokens.xToken,
+              "csrf-token": csrfToken,
+              "x-token": xToken,
+              // 나머지 필요한 헤더가 있다면 추가
             };
             const projectResponse = await fetch(
-              "https://playentry.org/graphql/SELECT_PROJECT",
+              "https://playentry.org/graphql/SELECT_PROJECT_LITE",
               {
                 method: "POST",
                 headers,
