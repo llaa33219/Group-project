@@ -1,6 +1,6 @@
 // worker.js
 
-// HTML 문자열 내의 특수문자를 이스케이프하는 함수
+// HTML 문자열 내의 특수문자를 이스케이프하는 함수 (디버깅용)
 function escapeHtml(html) {
   return html
     .replace(/&/g, "&amp;")
@@ -10,48 +10,40 @@ function escapeHtml(html) {
     .replace(/'/g, "&#039;");
 }
 
-// meta 태그에서 토큰을 추출하는 함수 (모든 공백과 줄바꿈 허용)
-function getMetaToken(sanitizedHtml, tokenName) {
-  const regex = new RegExp(
-    `<meta\\s+[^>]*name=["']${tokenName}["'][^>]*content=["']([^"']+)["']\\s*(\\/?)>`,
-    "i"
-  );
-  return sanitizedHtml.match(regex);
+// 주어진 HTML에서 CSRF 토큰과 x-token을 추출하는 함수
+function extractTokensFromHtml(html) {
+  let csrfToken = null;
+  let xToken = null;
+
+  // 1. 메타 태그 패턴 (self-closing 포함)
+  let match = html.match(/<meta\s+[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
+  if (match) {
+    csrfToken = match[1];
+  }
+  match = html.match(/<meta\s+[^>]*name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
+  if (match) {
+    xToken = match[1];
+  }
+
+  // 2. 인라인 JSON 패턴 (예: "csrf-token": "값")
+  if (!csrfToken) {
+    match = html.match(/"csrf-token"\s*:\s*"([^"]+)"/i);
+    if (match) {
+      csrfToken = match[1];
+    }
+  }
+  if (!xToken) {
+    match = html.match(/"x-token"\s*:\s*"([^"]+)"/i);
+    if (match) {
+      xToken = match[1];
+    }
+  }
+
+  return { csrfToken, xToken };
 }
 
-// 전역 캐시 변수 (홈페이지에서 추출한 x-token)
-let cachedXToken = null;
-
-// 홈페이지에서 x-token을 추출하는 함수
-async function getXToken() {
-  if (cachedXToken !== null) {
-    return cachedXToken;
-  }
-  const homeUrl = "https://playentry.org/";
-  console.log(`Fetching homepage for x-token: ${homeUrl}`);
-  const res = await fetch(homeUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
-      "Accept":
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
-  if (!res.ok) {
-    console.error(`홈페이지 요청 실패: ${res.status}`);
-    cachedXToken = "";
-    return cachedXToken;
-  }
-  const html = await res.text();
-  const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-  const xTokenMatch = getMetaToken(sanitizedHtml, "x-token");
-  console.log("홈페이지 x-token match:", xTokenMatch);
-  cachedXToken = xTokenMatch ? xTokenMatch[1] : "";
-  return cachedXToken;
-}
-
-// 프로젝트 페이지에서 CSRF 토큰만 추출하는 함수
-async function extractCsrfToken(projectId) {
+// 프로젝트 페이지에서 토큰을 추출하는 함수
+async function extractTokensFromProject(projectId) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
   console.log(`Fetching project page: ${projectUrl}`);
   const res = await fetch(projectUrl, {
@@ -67,17 +59,18 @@ async function extractCsrfToken(projectId) {
   }
   const html = await res.text();
   console.log("Project HTML snippet (first 500 chars):", html.substring(0, 500));
-  // <script> 태그 제거
+  // 스크립트 태그 제거(디버깅 시 HTML 노이즈 제거)
   const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-  const csrfTokenMatch = getMetaToken(sanitizedHtml, "csrf-token");
-  console.log("CSRF token match:", csrfTokenMatch);
-  if (!csrfTokenMatch) {
+  console.log("Sanitized HTML snippet:", sanitizedHtml.substring(0, 500));
+  const tokens = extractTokensFromHtml(sanitizedHtml);
+  if (!tokens.csrfToken) {
     throw new Error(
       "토큰 추출에 실패했습니다. CSRF 토큰을 찾을 수 없습니다. HTML snippet:\n" +
         escapeHtml(sanitizedHtml)
     );
   }
-  return csrfTokenMatch[1];
+  // xToken은 없으면 빈 문자열로 처리
+  return { csrfToken: tokens.csrfToken, xToken: tokens.xToken ? tokens.xToken : "" };
 }
 
 export default {
@@ -115,7 +108,7 @@ export default {
         if (!urlsText) {
           return new Response("URL이 입력되지 않았습니다.", { status: 400 });
         }
-        // 각 줄 단위로 분리 후 유효한 URL만 필터링
+        // 줄 단위로 분리 후 유효한 URL 필터링
         const urls = urlsText
           .split("\n")
           .map(line => line.trim())
@@ -125,9 +118,9 @@ export default {
         if (urls.length === 0) {
           return new Response("유효한 URL이 없습니다.", { status: 400 });
         }
-        // 8자리(영문/숫자 조합) 그룹 코드 생성
+        // 8자리 그룹 코드 생성
         const code = Math.random().toString(36).substring(2, 10);
-        // R2 버킷 (PROJECT_GROUPS 바인딩)을 이용해 그룹 정보 저장 (JSON 형태)
+        // R2 버킷 (PROJECT_GROUPS 바인딩) 저장 (JSON 형태)
         await env.PROJECT_GROUPS.put(code, JSON.stringify({ urls }));
         const domain = url.hostname;
         const responseHtml = `<!DOCTYPE html>
@@ -147,10 +140,10 @@ export default {
         });
       } catch (err) {
         console.error("Error in /create:", err);
-        return new Response(
-          "그룹 생성 중 에러 발생: " + err.message,
-          { headers: { "Content-Type": "text/plain;charset=UTF-8" }, status: 500 }
-        );
+        return new Response("그룹 생성 중 에러 발생: " + err.message, {
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          status: 500,
+        });
       }
     }
 
@@ -166,17 +159,15 @@ export default {
         const stored = await object.json();
         const urls = stored.urls;
         let listItems = "";
-        // 각 프로젝트 URL에 대해 데이터 수집
+        // 각 프로젝트 URL 처리
         for (const projectUrl of urls) {
           const match = projectUrl.match(/playentry\.org\/project\/([A-Za-z0-9]+)/);
           if (!match) continue;
           const projectId = match[1];
           try {
-            // 각 프로젝트 페이지에서 CSRF 토큰 추출
-            const csrfToken = await extractCsrfToken(projectId);
-            // x-token은 홈페이지에서 수집 (캐시 사용)
-            const xToken = await getXToken();
-            console.log(`Tokens for project ${projectId}: csrf-token=${csrfToken}, x-token=${xToken}`);
+            // 프로젝트 페이지에서 CSRF 토큰 및 x-token을 함께 추출
+            const tokens = await extractTokensFromProject(projectId);
+            console.log(`Tokens for project ${projectId}:`, tokens);
             // GraphQL 요청 본문 구성 (SELECT_PROJECT_LITE 사용)
             const graphqlBody = JSON.stringify({
               query: `
@@ -200,13 +191,12 @@ export default {
               `,
               variables: { id: projectId },
             });
-            // 추출한 토큰을 사용한 헤더 구성
+            // 헤더 구성 (추출한 토큰 사용)
             const headers = {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": csrfToken,
-              "x-token": xToken,
-              // 나머지 필요한 헤더가 있다면 추가
+              "csrf-token": tokens.csrfToken,
+              "x-token": tokens.xToken, // 없으면 빈 문자열
             };
             const projectResponse = await fetch(
               "https://playentry.org/graphql/SELECT_PROJECT_LITE",
@@ -216,8 +206,14 @@ export default {
                 body: graphqlBody,
               }
             );
-            const projectData = await projectResponse.json();
-            console.log("GraphQL response for project", projectId, projectData);
+            const responseText = await projectResponse.text();
+            console.log("GraphQL response text for project", projectId, responseText);
+            let projectData;
+            try {
+              projectData = JSON.parse(responseText);
+            } catch (e) {
+              throw new Error("GraphQL 응답 파싱 실패: " + e.message);
+            }
             if (projectData.errors) {
               console.error("GraphQL errors:", projectData.errors);
               throw new Error("GraphQL 요청 실패");
