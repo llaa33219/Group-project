@@ -4,21 +4,27 @@
 async function extractTokens(projectId) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
   console.log(`Fetching project page: ${projectUrl}`);
-  const res = await fetch(projectUrl);
+  const res = await fetch(projectUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+  });
   if (!res.ok) {
     throw new Error(`프로젝트 페이지(${projectUrl}) 요청 실패: ${res.status}`);
   }
   const html = await res.text();
   console.log("HTML snippet (first 500 chars):", html.substring(0, 500));
   
-  // 보다 유연한 정규표현식 사용: meta 태그 내 다른 속성이 있더라도 추출하도록 함.
+  // meta 태그에서 토큰 추출 (예시)
   const csrfTokenMatch = html.match(/<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i);
   const xTokenMatch = html.match(/<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']/i);
   console.log("csrfTokenMatch:", csrfTokenMatch);
   console.log("xTokenMatch:", xTokenMatch);
   
   if (!csrfTokenMatch || !xTokenMatch) {
-    throw new Error("토큰 추출에 실패했습니다. HTML 구조를 확인해보세요.");
+    // 토큰 추출 실패 시 HTML snippet도 에러 메시지에 포함
+    throw new Error("토큰 추출에 실패했습니다. HTML snippet: " + html.substring(0, 500));
   }
   return {
     csrfToken: csrfTokenMatch[1],
