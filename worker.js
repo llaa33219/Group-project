@@ -9,17 +9,14 @@ async function extractTokens(projectId) {
     throw new Error(`프로젝트 페이지(${projectUrl}) 요청 실패: ${res.status}`);
   }
   const html = await res.text();
-  // HTML의 처음 500자를 로그로 출력해서 meta 태그 위치를 확인합니다.
-  console.log("HTML snippet:", html.substring(0, 500));
-
-  // meta 태그에서 토큰 추출 (예시)
-  // 예: <meta name="csrf-token" content="토큰값">
-  const csrfTokenMatch = html.match(/<meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/i);
-  // 예: <meta name="x-token" content="토큰값">
-  const xTokenMatch = html.match(/<meta\s+name=["']x-token["']\s+content=["']([^"']+)["']/i);
+  console.log("HTML snippet (first 500 chars):", html.substring(0, 500));
+  
+  // 보다 유연한 정규표현식 사용: meta 태그 내 다른 속성이 있더라도 추출하도록 함.
+  const csrfTokenMatch = html.match(/<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i);
+  const xTokenMatch = html.match(/<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']/i);
   console.log("csrfTokenMatch:", csrfTokenMatch);
   console.log("xTokenMatch:", xTokenMatch);
-
+  
   if (!csrfTokenMatch || !xTokenMatch) {
     throw new Error("토큰 추출에 실패했습니다. HTML 구조를 확인해보세요.");
   }
