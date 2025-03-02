@@ -27,25 +27,24 @@ async function extractTokens(projectId) {
   }
   const html = await res.text();
   console.log("HTML snippet (first 500 chars):", html.substring(0, 500));
-
+  
   // <script> 태그 제거
   const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-
-  // meta 태그에서 토큰 추출 (예시)
+  
+  // self-closing meta 태그까지 포함하여 토큰 추출 (수정된 정규표현식)
   const csrfTokenMatch = sanitizedHtml.match(
-    /<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i
+    /<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i
   );
   const xTokenMatch = sanitizedHtml.match(
-    /<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']/i
+    /<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i
   );
   console.log("csrfTokenMatch:", csrfTokenMatch);
   console.log("xTokenMatch:", xTokenMatch);
-
+  
   if (!csrfTokenMatch || !xTokenMatch) {
-    // 토큰 추출 실패 시, HTML(스크립트 태그 제외)을 이스케이프하여 에러 메시지에 포함
+    // 토큰 추출 실패 시, 스크립트 태그 제거된 HTML 전체를 이스케이프하여 에러 메시지에 포함
     throw new Error(
-      "토큰 추출에 실패했습니다. HTML snippet:\n" +
-        escapeHtml(sanitizedHtml)
+      "토큰 추출에 실패했습니다. HTML snippet:\n" + escapeHtml(sanitizedHtml)
     );
   }
   return {
@@ -190,11 +189,7 @@ export default {
               }
             );
             const projectData = await projectResponse.json();
-            console.log(
-              "GraphQL response for project",
-              projectId,
-              projectData
-            );
+            console.log("GraphQL response for project", projectId, projectData);
             if (projectData.errors) {
               console.error("GraphQL errors:", projectData.errors);
               throw new Error("GraphQL 요청 실패");
