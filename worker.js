@@ -1,30 +1,52 @@
 // worker.js
 
+// HTML 문자열 내의 특수문자를 이스케이프하는 함수
+function escapeHtml(html) {
+  return html
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // 프로젝트 페이지에서 토큰(csrf-token, x-token) 자동 추출 함수
 async function extractTokens(projectId) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
   console.log(`Fetching project page: ${projectUrl}`);
   const res = await fetch(projectUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    }
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
   });
   if (!res.ok) {
     throw new Error(`프로젝트 페이지(${projectUrl}) 요청 실패: ${res.status}`);
   }
   const html = await res.text();
   console.log("HTML snippet (first 500 chars):", html.substring(0, 500));
-  
+
+  // <script> 태그 제거
+  const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+
   // meta 태그에서 토큰 추출 (예시)
-  const csrfTokenMatch = html.match(/<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i);
-  const xTokenMatch = html.match(/<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']/i);
+  const csrfTokenMatch = sanitizedHtml.match(
+    /<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i
+  );
+  const xTokenMatch = sanitizedHtml.match(
+    /<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']/i
+  );
   console.log("csrfTokenMatch:", csrfTokenMatch);
   console.log("xTokenMatch:", xTokenMatch);
-  
+
   if (!csrfTokenMatch || !xTokenMatch) {
-    // 토큰 추출 실패 시 HTML snippet도 에러 메시지에 포함
-    throw new Error("토큰 추출에 실패했습니다. HTML snippet: " + html.substring(0, 500));
+    // 토큰 추출 실패 시, HTML(스크립트 태그 제외)을 이스케이프하여 에러 메시지에 포함
+    throw new Error(
+      "토큰 추출에 실패했습니다. HTML snippet:\n" +
+        escapeHtml(sanitizedHtml)
+    );
   }
   return {
     csrfToken: csrfTokenMatch[1],
@@ -70,8 +92,8 @@ export default {
         // 각 줄 단위로 분리 후 유효한 URL만 필터링
         const urls = urlsText
           .split("\n")
-          .map(line => line.trim())
-          .filter(line =>
+          .map((line) => line.trim())
+          .filter((line) =>
             /^https:\/\/playentry\.org\/project\/[A-Za-z0-9]+/.test(line)
           );
         if (urls.length === 0) {
@@ -99,7 +121,10 @@ export default {
         });
       } catch (err) {
         console.error("Error in /create:", err);
-        return new Response("그룹 생성 중 에러 발생: " + err.message, { status: 500 });
+        return new Response(
+          "그룹 생성 중 에러 발생: " + err.message,
+          { headers: { "Content-Type": "text/plain;charset=UTF-8" }, status: 500 }
+        );
       }
     }
 
@@ -117,7 +142,9 @@ export default {
         let listItems = "";
         // 각 프로젝트 URL에 대해 데이터 수집
         for (const projectUrl of urls) {
-          const match = projectUrl.match(/playentry\.org\/project\/([A-Za-z0-9]+)/);
+          const match = projectUrl.match(
+            /playentry\.org\/project\/([A-Za-z0-9]+)/
+          );
           if (!match) continue;
           const projectId = match[1];
           try {
@@ -163,7 +190,11 @@ export default {
               }
             );
             const projectData = await projectResponse.json();
-            console.log("GraphQL response for project", projectId, projectData);
+            console.log(
+              "GraphQL response for project",
+              projectId,
+              projectData
+            );
             if (projectData.errors) {
               console.error("GraphQL errors:", projectData.errors);
               throw new Error("GraphQL 요청 실패");
@@ -216,7 +247,10 @@ export default {
         });
       } catch (err) {
         console.error("Error in group page:", err);
-        return new Response("그룹 페이지 처리 중 에러 발생: " + err.message, { status: 500 });
+        return new Response(
+          "그룹 페이지 처리 중 에러 발생: " + err.message,
+          { headers: { "Content-Type": "text/plain;charset=UTF-8" }, status: 500 }
+        );
       }
     }
 
