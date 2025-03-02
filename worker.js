@@ -10,6 +10,15 @@ function escapeHtml(html) {
     .replace(/'/g, "&#039;");
 }
 
+// meta 태그에서 토큰을 추출하는 함수 (모든 공백과 줄바꿈 허용)
+function getMetaToken(sanitizedHtml, tokenName) {
+  const regex = new RegExp(
+    `<meta\\s+[^>]*name=["']${tokenName}["'][^>]*content=["']([^"']+)["']\\s*(\\/?)>`,
+    "i"
+  );
+  return sanitizedHtml.match(regex);
+}
+
 // 프로젝트 페이지에서 토큰(csrf-token, x-token) 자동 추출 함수
 async function extractTokens(projectId) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
@@ -27,24 +36,20 @@ async function extractTokens(projectId) {
   }
   const html = await res.text();
   console.log("HTML snippet (first 500 chars):", html.substring(0, 500));
-  
+
   // <script> 태그 제거
   const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
   
-  // self-closing meta 태그까지 포함하여 토큰 추출 (수정된 정규표현식)
-  const csrfTokenMatch = sanitizedHtml.match(
-    /<meta\s+name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i
-  );
-  const xTokenMatch = sanitizedHtml.match(
-    /<meta\s+name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i
-  );
+  const csrfTokenMatch = getMetaToken(sanitizedHtml, "csrf-token");
+  const xTokenMatch = getMetaToken(sanitizedHtml, "x-token");
   console.log("csrfTokenMatch:", csrfTokenMatch);
   console.log("xTokenMatch:", xTokenMatch);
-  
+
   if (!csrfTokenMatch || !xTokenMatch) {
     // 토큰 추출 실패 시, 스크립트 태그 제거된 HTML 전체를 이스케이프하여 에러 메시지에 포함
     throw new Error(
-      "토큰 추출에 실패했습니다. HTML snippet:\n" + escapeHtml(sanitizedHtml)
+      "토큰 추출에 실패했습니다. HTML snippet:\n" +
+        escapeHtml(sanitizedHtml)
     );
   }
   return {
@@ -91,8 +96,8 @@ export default {
         // 각 줄 단위로 분리 후 유효한 URL만 필터링
         const urls = urlsText
           .split("\n")
-          .map((line) => line.trim())
-          .filter((line) =>
+          .map(line => line.trim())
+          .filter(line =>
             /^https:\/\/playentry\.org\/project\/[A-Za-z0-9]+/.test(line)
           );
         if (urls.length === 0) {
@@ -120,10 +125,10 @@ export default {
         });
       } catch (err) {
         console.error("Error in /create:", err);
-        return new Response(
-          "그룹 생성 중 에러 발생: " + err.message,
-          { headers: { "Content-Type": "text/plain;charset=UTF-8" }, status: 500 }
-        );
+        return new Response("그룹 생성 중 에러 발생: " + err.message, {
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          status: 500,
+        });
       }
     }
 
@@ -141,9 +146,7 @@ export default {
         let listItems = "";
         // 각 프로젝트 URL에 대해 데이터 수집
         for (const projectUrl of urls) {
-          const match = projectUrl.match(
-            /playentry\.org\/project\/([A-Za-z0-9]+)/
-          );
+          const match = projectUrl.match(/playentry\.org\/project\/([A-Za-z0-9]+)/);
           if (!match) continue;
           const projectId = match[1];
           try {
@@ -242,10 +245,10 @@ export default {
         });
       } catch (err) {
         console.error("Error in group page:", err);
-        return new Response(
-          "그룹 페이지 처리 중 에러 발생: " + err.message,
-          { headers: { "Content-Type": "text/plain;charset=UTF-8" }, status: 500 }
-        );
+        return new Response("그룹 페이지 처리 중 에러 발생: " + err.message, {
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          status: 500,
+        });
       }
     }
 
