@@ -10,19 +10,14 @@ function escapeHtml(html) {
     .replace(/'/g, "&#039;");
 }
 
-// 주어진 HTML에서 CSRF 토큰과 x-token을 추출하는 함수
+// 주어진 HTML에서 CSRF 토큰만 추출하는 함수 (x-token은 로컬 스토리지에서 가져옴)
 function extractTokensFromHtml(html) {
   let csrfToken = null;
-  let xToken = null;
 
   // 1. 메타 태그 패턴 (self-closing 포함)
   let match = html.match(/<meta\s+[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
   if (match) {
     csrfToken = match[1];
-  }
-  match = html.match(/<meta\s+[^>]*name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
-  if (match) {
-    xToken = match[1];
   }
 
   // 2. 인라인 JSON 패턴 (예: "csrf-token": "값")
@@ -32,18 +27,12 @@ function extractTokensFromHtml(html) {
       csrfToken = match[1];
     }
   }
-  if (!xToken) {
-    match = html.match(/"x-token"\s*:\s*"([^"]+)"/i);
-    if (match) {
-      xToken = match[1];
-    }
-  }
 
-  return { csrfToken, xToken };
+  return { csrfToken };
 }
 
-// 프로젝트 페이지에서 토큰을 추출하는 함수
-async function extractTokensFromProject(projectId) {
+// 프로젝트 페이지에서 CSRF 토큰을 추출하는 함수 (x-token은 전달받음)
+async function extractTokensFromProject(projectId, xToken) {
   const projectUrl = `https://playentry.org/project/${projectId}`;
   console.log(`Fetching project page: ${projectUrl}`);
   const res = await fetch(projectUrl, {
@@ -69,8 +58,7 @@ async function extractTokensFromProject(projectId) {
         escapeHtml(sanitizedHtml)
     );
   }
-  // xToken은 없으면 빈 문자열로 처리
-  return { csrfToken: tokens.csrfToken, xToken: tokens.xToken ? tokens.xToken : "" };
+  return { csrfToken: tokens.csrfToken, xToken: xToken };
 }
 
 export default {
@@ -85,11 +73,33 @@ export default {
   <head>
     <meta charset="UTF-8">
     <title>작품 그룹 생성</title>
+    <script>
+      // 페이지 로드 시 로컬 스토리지에서 playentry_token 값을 가져와 토큰 입력란에 자동 기입
+      window.addEventListener('DOMContentLoaded', function() {
+        const playtokenField = document.getElementById('playentry_token');
+        const token = localStorage.getItem('playentry_token');
+        if (token) {
+          playtokenField.value = token;
+          console.log('Token loaded from localStorage');
+        } else {
+          console.log('No token found in localStorage');
+        }
+      });
+    </script>
   </head>
   <body>
     <h1>작품 그룹 생성</h1>
     <form method="POST" action="/create">
-      <textarea name="urls" rows="10" cols="50" placeholder="https://playentry.org/project/프로젝트ID 를 한 줄에 하나씩 입력"></textarea>
+      <div>
+        <label for="playentry_token">Entry 토큰 (자동으로 가져옴):</label><br/>
+        <input type="text" id="playentry_token" name="playentry_token" style="width:100%"><br/>
+        <small>자동으로 로컬 스토리지에서 불러옵니다. 토큰이 보이지 않는다면 playentry.org에 로그인해주세요.</small>
+      </div>
+      <br/>
+      <div>
+        <label for="urls">프로젝트 URL 목록:</label><br/>
+        <textarea name="urls" id="urls" rows="10" cols="50" placeholder="https://playentry.org/project/프로젝트ID 를 한 줄에 하나씩 입력"></textarea>
+      </div>
       <br/>
       <button type="submit">작품 그룹 생성</button>
     </form>
@@ -105,6 +115,8 @@ export default {
       try {
         const formData = await request.formData();
         const urlsText = formData.get("urls");
+        const xToken = formData.get("playentry_token") || ""; // 사용자가 제공한 playentry_token
+        
         if (!urlsText) {
           return new Response("URL이 입력되지 않았습니다.", { status: 400 });
         }
@@ -121,7 +133,7 @@ export default {
         // 8자리 그룹 코드 생성
         const code = Math.random().toString(36).substring(2, 10);
         // R2 버킷 (PROJECT_GROUPS 바인딩) 저장 (JSON 형태)
-        await env.PROJECT_GROUPS.put(code, JSON.stringify({ urls }));
+        await env.PROJECT_GROUPS.put(code, JSON.stringify({ urls, xToken })); // xToken도 함께 저장
         const domain = url.hostname;
         const responseHtml = `<!DOCTYPE html>
 <html>
@@ -158,6 +170,7 @@ export default {
         }
         const stored = await object.json();
         const urls = stored.urls;
+        const xToken = stored.xToken || ""; // 저장된 x-token 가져오기
         let listItems = "";
         // 각 프로젝트 URL 처리
         for (const projectUrl of urls) {
@@ -165,8 +178,8 @@ export default {
           if (!match) continue;
           const projectId = match[1];
           try {
-            // 프로젝트 페이지에서 CSRF 토큰 및 x-token을 함께 추출
-            const tokens = await extractTokensFromProject(projectId);
+            // 프로젝트 페이지에서 CSRF 토큰 추출 (x-token은 이미 가지고 있음)
+            const tokens = await extractTokensFromProject(projectId, xToken);
             console.log(`Tokens for project ${projectId}:`, tokens);
             // GraphQL 요청 본문 구성 (SELECT_PROJECT_LITE 사용)
             const graphqlBody = JSON.stringify({
@@ -196,7 +209,7 @@ export default {
               "accept": "*/*",
               "content-type": "application/json",
               "csrf-token": tokens.csrfToken,
-              "x-token": tokens.xToken, // 없으면 빈 문자열
+              "x-token": tokens.xToken, // 로컬 스토리지에서 가져온 토큰
             };
             const projectResponse = await fetch(
               "https://playentry.org/graphql/SELECT_PROJECT_LITE",
