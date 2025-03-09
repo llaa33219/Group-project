@@ -374,6 +374,9 @@ export default {
               "csrf-token": tokens.csrfToken,
               "x-token": tokens.xToken, // 없으면 빈 문자열
             };
+            // GraphQL 요청 실행 전 헤더 로깅
+            console.log(`프로젝트 ${projectId}에 대한 GraphQL 요청 헤더:`, headers);
+            
             const projectResponse = await fetch(
               "https://playentry.org/graphql/SELECT_PROJECT_LITE",
               {
@@ -382,13 +385,30 @@ export default {
                 body: graphqlBody,
               }
             );
+            
+            // 응답 상태 코드 및 헤더 확인
+            console.log(`GraphQL 응답 상태 코드 (${projectId}):`, projectResponse.status);
+            console.log(`GraphQL 응답 Content-Type (${projectId}):`, projectResponse.headers.get('content-type'));
+            
             const responseText = await projectResponse.text();
-            console.log("GraphQL response text for project", projectId, responseText);
+            
+            // 응답의 처음 200자만 로깅 (너무 길면 로그가 가독성이 떨어짐)
+            console.log(`GraphQL 응답 미리보기 (${projectId}):`, 
+              responseText.length > 200 
+                ? responseText.substring(0, 200) + "..." 
+                : responseText
+            );
+            
             let projectData;
             try {
+              // HTML인지 확인 (응답이 <로 시작하는지)
+              if (responseText.trim().startsWith('<')) {
+                throw new Error(`HTML 응답 받음 (응답 코드: ${projectResponse.status}). 인증/권한 문제 가능성 높음`);
+              }
+              
               projectData = JSON.parse(responseText);
             } catch (e) {
-              throw new Error("GraphQL 응답 파싱 실패: " + e.message);
+              throw new Error(`GraphQL 응답 파싱 실패: ${e.message}\n응답 미리보기: ${responseText.substring(0, 100)}...`);
             }
             if (projectData.errors) {
               console.error("GraphQL errors:", projectData.errors);
