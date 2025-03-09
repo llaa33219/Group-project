@@ -344,8 +344,9 @@ export default {
             // 프로젝트 페이지에서 CSRF 토큰 및 x-token을 함께 추출
             const tokens = await extractTokensFromProject(projectId);
             console.log(`Tokens for project ${projectId}:`, tokens);
-            // GraphQL 요청 본문 구성 (SELECT_PROJECT_LITE 사용)
+            // GraphQL 요청 본문 구성 - operationName 추가 및 형식 수정
             const graphqlBody = JSON.stringify({
+              operationName: "SELECT_PROJECT_LITE",
               query: `
                 query SELECT_PROJECT_LITE($id: ID! $groupId: ID) {
                   project(id: $id, groupId: $groupId) {
@@ -365,24 +366,32 @@ export default {
                   }
                 }
               `,
-              variables: { id: projectId },
+              variables: { id: projectId }
             });
-            // 헤더 구성 (추출한 토큰 사용)
+            
+            // 헤더 구성 (추출한 토큰 사용) - 추가 헤더 포함
             const headers = {
-              "accept": "*/*",
-              "content-type": "application/json",
+              "Accept": "*/*",
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+              "Origin": "https://playentry.org",
+              "Referer": `https://playentry.org/project/${projectId}`,
+              "Apollo-Require-Preflight": "true",
               "csrf-token": tokens.csrfToken,
-              "x-token": tokens.xToken, // 없으면 빈 문자열
+              "x-token": tokens.xToken || "" // 없으면 빈 문자열
             };
+            
             // GraphQL 요청 실행 전 헤더 로깅
             console.log(`프로젝트 ${projectId}에 대한 GraphQL 요청 헤더:`, headers);
             
+            // URL 변경 - 일반 /graphql 엔드포인트 사용
             const projectResponse = await fetch(
-              "https://playentry.org/graphql/SELECT_PROJECT_LITE",
+              "https://playentry.org/graphql",
               {
                 method: "POST",
                 headers,
                 body: graphqlBody,
+                credentials: "include" // 쿠키 포함하여 요청
               }
             );
             
