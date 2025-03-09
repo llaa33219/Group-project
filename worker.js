@@ -10,7 +10,7 @@ function escapeHtml(html) {
     .replace(/'/g, "&#039;");
 }
 
-// 주어진 HTML에서 CSRF 토큰만 추출하는 함수 (x-token은 로컬 스토리지에서 가져옴)
+// 주어진 HTML에서 CSRF 토큰을 추출하는 함수
 function extractTokensFromHtml(html) {
   let csrfToken = null;
 
@@ -31,34 +31,42 @@ function extractTokensFromHtml(html) {
   return { csrfToken };
 }
 
-// 프로젝트 페이지에서 CSRF 토큰을 추출하는 함수 (x-token은 전달받음)
-async function extractTokensFromProject(projectId, xToken) {
-  const projectUrl = `https://playentry.org/project/${projectId}`;
-  console.log(`Fetching project page: ${projectUrl}`);
-  const res = await fetch(projectUrl, {
+// Entry 사이트에서 토큰을 가져오는 함수
+async function fetchEntryTokens() {
+  console.log("Entry 사이트에서 토큰 가져오기 시도");
+  const entryUrl = "https://playentry.org/";
+  const res = await fetch(entryUrl, {
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
-      "Accept":
-        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     },
   });
+  
   if (!res.ok) {
-    throw new Error(`프로젝트 페이지(${projectUrl}) 요청 실패: ${res.status}`);
+    throw new Error(`Entry 사이트 요청 실패: ${res.status}`);
   }
+  
   const html = await res.text();
-  console.log("Project HTML snippet (first 500 chars):", html.substring(0, 500));
-  // 스크립트 태그 제거(디버깅 시 HTML 노이즈 제거)
-  const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-  console.log("Sanitized HTML snippet:", sanitizedHtml.substring(0, 500));
-  const tokens = extractTokensFromHtml(sanitizedHtml);
-  if (!tokens.csrfToken) {
-    throw new Error(
-      "토큰 추출에 실패했습니다. CSRF 토큰을 찾을 수 없습니다. HTML snippet:\n" +
-        escapeHtml(sanitizedHtml)
-    );
+  console.log("Entry HTML 스니펫 (처음 500자):", html.substring(0, 500));
+  
+  // CSRF 토큰 추출
+  const tokens = extractTokensFromHtml(html);
+  
+  // x-token 검색 (쿠키나 HTML 내부의 JS 변수에서)
+  let xToken = null;
+  const xTokenMatch = html.match(/playentry_token["']?\s*[=:]\s*["']([^"']+)["']/i);
+  if (xTokenMatch) {
+    xToken = xTokenMatch[1];
   }
-  return { csrfToken: tokens.csrfToken, xToken: xToken };
+  
+  if (!tokens.csrfToken) {
+    throw new Error("CSRF 토큰을 찾을 수 없습니다.");
+  }
+  
+  return { 
+    csrfToken: tokens.csrfToken, 
+    xToken: xToken || "" 
+  };
 }
 
 export default {
@@ -73,117 +81,42 @@ export default {
   <head>
     <meta charset="UTF-8">
     <title>작품 그룹 생성</title>
-    <script>
-      // 디버깅을 위한 함수
-      function debugLocalStorage() {
-        try {
-          console.log('디버깅: localStorage 접근 시도');
-          const allKeys = Object.keys(localStorage);
-          console.log('모든 localStorage 키:', allKeys);
-          
-          // playentry_token 키 확인
-          const token = localStorage.getItem('playentry_token');
-          if (token) {
-            console.log('playentry_token 존재함:', token.substring(0, 10) + '...');
-          } else {
-            console.log('playentry_token 키가 없음');
-            
-            // playentry 관련 키 확인
-            const entryKeys = allKeys.filter(k => k.toLowerCase().includes('playentry') || k.toLowerCase().includes('entry'));
-            if (entryKeys.length > 0) {
-              console.log('playentry 관련 키:', entryKeys);
-              for (let i = 0; i < entryKeys.length; i++) {
-                const k = entryKeys[i];
-                const value = localStorage.getItem(k);
-                if (value) {
-                  console.log('키: ' + k + ', 값: ' + value.substring(0, 10) + '...');
-                } else {
-                  console.log('키: ' + k + ', 값: null 또는 빈 문자열');
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error('localStorage 접근 오류:', e);
-        }
-      }
-
-      // 토큰 추출 함수
-      function extractTokens() {
-        // CSRF 토큰 가져오기
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-        console.log('Meta CSRF token:', csrfToken);
-        
-        // X-Token 가져오기
-        let xToken = '';
-        try {
-          xToken = localStorage.getItem('playentry_token') || '';
-          
-          // 다른 키 확인
-          if (!xToken) {
-            const allKeys = Object.keys(localStorage);
-            const entryKeys = allKeys.filter(function(k) {
-              return k.toLowerCase().includes('token') || k.toLowerCase().includes('entry');
-            });
-            
-            for (let i = 0; i < entryKeys.length; i++) {
-              const key = entryKeys[i];
-              const value = localStorage.getItem(key);
-              if (value) {
-                console.log('시도: ' + key + ' = ' + value.substring(0, 10) + '...');
-                if (value.length > 20) {
-                  xToken = value;
-                  console.log('대체 토큰 발견: ' + key);
-                  break;
-                }
-              } else {
-                console.log('시도: ' + key + ' = null 또는 빈 문자열');
-              }
-            }
-          }
-        } catch (e) {
-          console.error('localStorage 접근 오류:', e);
-        }
-        
-        return { csrfToken, xToken };
-      }
-
-      // 페이지 로드 시 실행
-      window.addEventListener('DOMContentLoaded', function() {
-        console.log('DOM 로드됨, 토큰 추출 시도');
-        const playtokenField = document.getElementById('playentry_token');
-        
-        // 디버깅
-        debugLocalStorage();
-        
-        // 토큰 추출
-        const tokens = extractTokens();
-        if (tokens.xToken) {
-          playtokenField.value = tokens.xToken;
-          console.log('토큰 설정됨:', tokens.xToken.substring(0, 10) + '...');
-        } else {
-          console.log('토큰을 찾을 수 없음');
-          playtokenField.placeholder = '토큰을 찾을 수 없습니다. Entry 사이트에 로그인 후 다시 시도하세요.';
-        }
-      });
-    </script>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; line-height: 1.6; }
+      .container { max-width: 800px; margin: 0 auto; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+      h1, h2 { color: #333; }
+      textarea, input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; }
+      button { background-color: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+      button:hover { background-color: #45a049; }
+      .token-info { background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-top: 10px; }
+      .step { font-weight: bold; margin-top: 15px; }
+    </style>
   </head>
   <body>
-    <h1>작품 그룹 생성</h1>
-    <form method="POST" action="/create">
-      <div>
-        <label for="playentry_token">Entry 토큰 (자동으로 가져옴):</label><br/>
-        <input type="text" id="playentry_token" name="playentry_token" style="width:100%"><br/>
-        <small>자동으로 로컬 스토리지에서 불러옵니다. 토큰이 보이지 않는다면 playentry.org에 로그인해주세요.</small>
+    <div class="container">
+      <h1>작품 그룹 생성</h1>
+      
+      <div class="card">
+        <h2>1단계: Entry 토큰 가져오기</h2>
+        <p>아래 버튼을 클릭하여 Entry 사이트에서 토큰을 가져옵니다.</p>
+        <form method="POST" action="/fetch-tokens">
+          <button type="submit">Entry 토큰 가져오기</button>
+        </form>
       </div>
-      <br/>
-      <div>
-        <label for="urls">프로젝트 URL 목록:</label><br/>
-        <textarea name="urls" id="urls" rows="10" cols="50" placeholder="https://playentry.org/project/프로젝트ID 를 한 줄에 하나씩 입력"></textarea>
+      
+      <div class="card">
+        <h2>2단계: 프로젝트 그룹 생성</h2>
+        <p>토큰을 가져온 후 프로젝트 URL을 입력하고 그룹을 생성하세요.</p>
+        <form method="POST" action="/create" id="createForm">
+          <div>
+            <label for="urls">프로젝트 URL 목록:</label>
+            <textarea name="urls" id="urls" rows="10" placeholder="https://playentry.org/project/프로젝트ID 를 한 줄에 하나씩 입력"></textarea>
+          </div>
+          <button type="submit">작품 그룹 생성</button>
+        </form>
       </div>
-      <br/>
-      <button type="submit">작품 그룹 생성</button>
-    </form>
+    </div>
   </body>
 </html>`;
       return new Response(html, {
@@ -191,16 +124,94 @@ export default {
       });
     }
 
+    // Entry 토큰 가져오기 (POST "/fetch-tokens")
+    if (url.pathname === "/fetch-tokens" && request.method === "POST") {
+      try {
+        // Entry 사이트에서 토큰 가져오기
+        const tokens = await fetchEntryTokens();
+        
+        // 세션에 토큰 저장 (R2 임시 저장소 활용)
+        const sessionId = Math.random().toString(36).substring(2, 15);
+        await env.PROJECT_GROUPS.put("session:" + sessionId, JSON.stringify(tokens), {
+          expirationTtl: 3600 // 1시간 후 만료
+        });
+        
+        const responseHtml = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>토큰 가져오기 완료</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; line-height: 1.6; }
+      .container { max-width: 800px; margin: 0 auto; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+      h1, h2 { color: #333; }
+      .token-info { background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
+      .success { color: #4CAF50; }
+      button { background-color: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+      button:hover { background-color: #45a049; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>토큰 가져오기 완료</h1>
+      <div class="card">
+        <h2 class="success">토큰 가져오기 성공!</h2>
+        <div class="token-info">
+          <p><strong>CSRF 토큰:</strong> ${tokens.csrfToken.substring(0, 10)}...</p>
+          <p><strong>X-Token:</strong> ${tokens.xToken ? tokens.xToken.substring(0, 10) + '...' : '없음'}</p>
+          <p><strong>세션 ID:</strong> ${sessionId}</p>
+        </div>
+        <p>이제 프로젝트 그룹을 생성할 수 있습니다.</p>
+        <form method="POST" action="/create">
+          <input type="hidden" name="sessionId" value="${sessionId}">
+          <div>
+            <label for="urls">프로젝트 URL 목록:</label><br>
+            <textarea name="urls" id="urls" rows="10" style="width: 100%;" placeholder="https://playentry.org/project/프로젝트ID 를 한 줄에 하나씩 입력"></textarea>
+          </div>
+          <br>
+          <button type="submit">작품 그룹 생성</button>
+        </form>
+        <p><a href="/">처음으로 돌아가기</a></p>
+      </div>
+    </div>
+  </body>
+</html>`;
+        return new Response(responseHtml, {
+          headers: { "Content-Type": "text/html;charset=UTF-8" },
+        });
+      } catch (err) {
+        console.error("Error fetching tokens:", err);
+        return new Response("토큰 가져오기 실패: " + err.message, {
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          status: 500,
+        });
+      }
+    }
+    
     // 그룹 생성 처리 (POST "/create")
     if (url.pathname === "/create" && request.method === "POST") {
       try {
         const formData = await request.formData();
         const urlsText = formData.get("urls");
-        const xToken = formData.get("playentry_token") || ""; // 사용자가 제공한 playentry_token
+        const sessionId = formData.get("sessionId");
         
         if (!urlsText) {
           return new Response("URL이 입력되지 않았습니다.", { status: 400 });
         }
+        
+        if (!sessionId) {
+          return new Response("세션 ID가 없습니다. 먼저 토큰을 가져와주세요.", { status: 400 });
+        }
+        
+        // 세션에서 토큰 가져오기
+        const sessionObj = await env.PROJECT_GROUPS.get("session:" + sessionId);
+        if (!sessionObj) {
+          return new Response("세션이 만료되었거나 존재하지 않습니다. 다시 토큰을 가져와주세요.", { status: 400 });
+        }
+        
+        const tokens = JSON.parse(await sessionObj.text());
+        
         // 줄 단위로 분리 후 유효한 URL 필터링
         const urls = urlsText
           .split("\n")
@@ -214,18 +225,40 @@ export default {
         // 8자리 그룹 코드 생성
         const code = Math.random().toString(36).substring(2, 10);
         // R2 버킷 (PROJECT_GROUPS 바인딩) 저장 (JSON 형태)
-        await env.PROJECT_GROUPS.put(code, JSON.stringify({ urls, xToken })); // xToken도 함께 저장
+        await env.PROJECT_GROUPS.put(code, JSON.stringify({ 
+          urls,
+          csrfToken: tokens.csrfToken,
+          xToken: tokens.xToken 
+        }));
+        
         const domain = url.hostname;
         const responseHtml = `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8">
     <title>그룹 생성 완료</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; line-height: 1.6; }
+      .container { max-width: 800px; margin: 0 auto; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+      h1 { color: #333; }
+      .success { color: #4CAF50; }
+      .group-info { background-color: #f8f9fa; padding: 15px; border-radius: 4px; margin: 15px 0; }
+    </style>
   </head>
   <body>
-    <h1>그룹 생성 완료</h1>
-    <p>생성된 그룹 코드: <strong>${code}</strong></p>
-    <p>접속 URL: <a href="https://${domain}/${code}">https://${domain}/${code}</a></p>
+    <div class="container">
+      <h1>그룹 생성 완료</h1>
+      <div class="card">
+        <h2 class="success">그룹이 성공적으로 생성되었습니다!</h2>
+        <div class="group-info">
+          <p><strong>생성된 그룹 코드:</strong> ${code}</p>
+          <p><strong>접속 URL:</strong> <a href="https://${domain}/${code}">https://${domain}/${code}</a></p>
+          <p><strong>프로젝트 수:</strong> ${urls.length}개</p>
+        </div>
+        <p><a href="/">처음으로 돌아가기</a></p>
+      </div>
+    </div>
   </body>
 </html>`;
         return new Response(responseHtml, {
@@ -251,7 +284,9 @@ export default {
         }
         const stored = await object.json();
         const urls = stored.urls;
-        const xToken = stored.xToken || ""; // 저장된 x-token 가져오기
+        const csrfToken = stored.csrfToken || "";
+        const xToken = stored.xToken || "";
+        
         let listItems = "";
         // 각 프로젝트 URL 처리
         for (const projectUrl of urls) {
@@ -259,9 +294,6 @@ export default {
           if (!match) continue;
           const projectId = match[1];
           try {
-            // 프로젝트 페이지에서 CSRF 토큰 추출 (x-token은 이미 가지고 있음)
-            const tokens = await extractTokensFromProject(projectId, xToken);
-            console.log(`Tokens for project ${projectId}:`, tokens);
             // GraphQL 요청 본문 구성 (SELECT_PROJECT_LITE 사용)
             const graphqlBody = JSON.stringify({
               query: `
@@ -289,9 +321,11 @@ export default {
             const headers = {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": tokens.csrfToken,
-              "x-token": tokens.xToken, // 로컬 스토리지에서 가져온 토큰
+              "csrf-token": csrfToken,
+              "x-token": xToken,
             };
+            console.log(`API 요청 토큰 - CSRF: ${csrfToken.substring(0, 10)}..., X-Token: ${xToken ? xToken.substring(0, 10) + '...' : '없음'}`);
+            
             const projectResponse = await fetch(
               "https://playentry.org/graphql/SELECT_PROJECT_LITE",
               {
@@ -310,36 +344,32 @@ export default {
             }
             if (projectData.errors) {
               console.error("GraphQL errors:", projectData.errors);
-              throw new Error("GraphQL 요청 실패");
+              throw new Error("GraphQL 요청 실패: " + JSON.stringify(projectData.errors));
             }
             const project = projectData.data.project;
-            listItems += `<li>
-  <div data-testid="wrapper" class="css-ul67nl e1lvzky422">
-    <a class="tagmanagerundefined css-kkg74o e1lvzky421" href="/project/${project.id}" style="background-image: url('${project.thumb}'), url('/img/DefaultCardThmb.svg');">
-      <div class="css-tukhj5 e1lvzky419">
-        <div class="css-1ctr5g5 e1lvzky418">기타</div>
-      </div>
-    </a>
-    <div class="tagmanagerundefined css-1v0yvbh e1lvzky413">
-      <a class="tagmanagerundefined css-1iem5wd e1lvzky412" href="/project/${project.id}">${project.name}</a>
-      <div class="css-127drii e1lvzky410">
-        <a href="/profile/${project.user.id}">
-          <span style="background-image: url('${project.user.profileImage.filename}');">&nbsp;</span>
-          <em>${project.user.nickname}</em>
+            listItems += `<li class="project-item">
+  <div class="project-card">
+    <div class="project-thumb" style="background-image: url('${project.thumb}'), url('/img/DefaultCardThmb.svg');">
+    </div>
+    <div class="project-info">
+      <a href="https://playentry.org/project/${project.id}" class="project-title">${project.name}</a>
+      <div class="user-info">
+        <a href="https://playentry.org/profile/${project.user.id}" class="user-link">
+          <span class="user-avatar" style="background-image: url('${project.user.profileImage.filename}');"></span>
+          <span class="user-name">${project.user.nickname}</span>
         </a>
       </div>
     </div>
-    <div class="css-xj5nm9 e1lvzky49">
-      <span><em class="viewCount css-1lkc9et e1lvzky48"><em class="blind">뷰 :</em></em>${project.visit || 0}</span>
-      <span><em class="Heart css-1lkc9et e1lvzky48"><em class="blind">좋아요 :</em></em>${project.likeCnt || 0}</span>
-      <span><em class="Comment css-1lkc9et e1lvzky48"><em class="blind">댓글 :</em></em>${project.comment || 0}</span>
+    <div class="project-stats">
+      <span class="stat"><i class="icon-view"></i> ${project.visit || 0}</span>
+      <span class="stat"><i class="icon-like"></i> ${project.likeCnt || 0}</span>
+      <span class="stat"><i class="icon-comment"></i> ${project.comment || 0}</span>
     </div>
-    <div class="css-1iimju e1lvzky46"><span class="blind">체크</span></div>
   </div>
 </li>`;
           } catch (err) {
             console.error(`Error processing project ${projectId}:`, err);
-            listItems += `<li>프로젝트 ${projectId} 데이터를 불러오는데 실패했습니다. (${err.message})</li>`;
+            listItems += `<li class="error-item">프로젝트 ${projectId} 데이터를 불러오는데 실패했습니다. (${err.message})</li>`;
           }
         }
         const html = `<!DOCTYPE html>
@@ -347,12 +377,39 @@ export default {
   <head>
     <meta charset="UTF-8">
     <title>프로젝트 그룹 - ${code}</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+      .container { max-width: 1200px; margin: 0 auto; }
+      h1 { color: #333; text-align: center; margin-bottom: 30px; }
+      .project-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+      .project-item { background-color: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+      .project-card { display: flex; flex-direction: column; height: 100%; }
+      .project-thumb { height: 180px; background-size: cover; background-position: center; background-color: #eee; }
+      .project-info { padding: 15px; flex-grow: 1; }
+      .project-title { font-size: 18px; font-weight: bold; color: #333; text-decoration: none; display: block; margin-bottom: 10px; }
+      .project-title:hover { color: #1a73e8; }
+      .user-info { display: flex; align-items: center; margin-bottom: 10px; }
+      .user-link { display: flex; align-items: center; text-decoration: none; color: #666; }
+      .user-avatar { width: 24px; height: 24px; border-radius: 50%; background-size: cover; margin-right: 8px; background-color: #ddd; }
+      .user-name { font-size: 14px; }
+      .project-stats { display: flex; background-color: #f9f9f9; padding: 10px 15px; border-top: 1px solid #eee; }
+      .stat { display: flex; align-items: center; margin-right: 15px; font-size: 13px; color: #666; }
+      .error-item { padding: 15px; color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; }
+      .icon-view:before { content: "👁️"; margin-right: 5px; }
+      .icon-like:before { content: "❤️"; margin-right: 5px; }
+      .icon-comment:before { content: "💬"; margin-right: 5px; }
+      .home-link { display: block; text-align: center; margin-top: 20px; color: #1a73e8; text-decoration: none; }
+      .home-link:hover { text-decoration: underline; }
+    </style>
   </head>
   <body>
-    <h1>프로젝트 그룹 - ${code}</h1>
-    <ul>
-      ${listItems}
-    </ul>
+    <div class="container">
+      <h1>프로젝트 그룹 - ${code}</h1>
+      <ul class="project-list">
+        ${listItems}
+      </ul>
+      <a href="/" class="home-link">처음으로 돌아가기</a>
+    </div>
   </body>
 </html>`;
         return new Response(html, {
