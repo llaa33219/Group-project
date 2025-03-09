@@ -10,14 +10,20 @@ function escapeHtml(html) {
     .replace(/'/g, "&#039;");
 }
 
-// 주어진 HTML에서 CSRF 토큰을 추출하는 함수
+// 주어진 HTML에서 CSRF 토큰과 x-token을 추출하는 함수
 function extractTokensFromHtml(html) {
   let csrfToken = null;
+  let xToken = null;
 
   // 1. 메타 태그 패턴 (self-closing 포함)
   let match = html.match(/<meta\s+[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
   if (match) {
     csrfToken = match[1];
+  }
+  
+  match = html.match(/<meta\s+[^>]*name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
+  if (match) {
+    xToken = match[1];
   }
 
   // 2. 인라인 JSON 패턴 (예: "csrf-token": "값")
@@ -27,8 +33,30 @@ function extractTokensFromHtml(html) {
       csrfToken = match[1];
     }
   }
+  
+  if (!xToken) {
+    match = html.match(/"x-token"\s*:\s*"([^"]+)"/i);
+    if (match) {
+      xToken = match[1];
+    }
+  }
+  
+  // 3. JavaScript 변수 패턴 (예: window._CSRF_TOKEN = "값")
+  if (!csrfToken) {
+    match = html.match(/[_$a-zA-Z0-9]+\.?[_$a-zA-Z0-9]*\s*=\s*["']([^"']{20,})["'].*csrf/i);
+    if (match) {
+      csrfToken = match[1];
+    }
+  }
+  
+  if (!xToken) {
+    match = html.match(/[_$a-zA-Z0-9]+\.?[_$a-zA-Z0-9]*\s*=\s*["']([^"']{20,})["'].*token/i);
+    if (match) {
+      xToken = match[1];
+    }
+  }
 
-  return { csrfToken };
+  return { csrfToken, xToken };
 }
 
 // Entry 사이트에서 토큰을 가져오는 함수
@@ -49,15 +77,12 @@ async function fetchEntryTokens() {
   const html = await res.text();
   console.log("Entry HTML 스니펫 (처음 500자):", html.substring(0, 500));
   
-  // CSRF 토큰 추출
+  // CSRF 토큰과 x-token 추출
   const tokens = extractTokensFromHtml(html);
-  
-  // x-token 검색 (쿠키나 HTML 내부의 JS 변수에서)
-  let xToken = null;
-  const xTokenMatch = html.match(/playentry_token["']?\s*[=:]\s*["']([^"']+)["']/i);
-  if (xTokenMatch) {
-    xToken = xTokenMatch[1];
-  }
+  console.log("추출된 토큰:", {
+    csrfToken: tokens.csrfToken ? tokens.csrfToken.substring(0, 10) + '...' : '없음',
+    xToken: tokens.xToken ? tokens.xToken.substring(0, 10) + '...' : '없음'
+  });
   
   if (!tokens.csrfToken) {
     throw new Error("CSRF 토큰을 찾을 수 없습니다.");
@@ -65,7 +90,7 @@ async function fetchEntryTokens() {
   
   return { 
     csrfToken: tokens.csrfToken, 
-    xToken: xToken || "" 
+    xToken: tokens.xToken || "" 
   };
 }
 
