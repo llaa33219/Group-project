@@ -114,8 +114,6 @@ export default {
       textarea, input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; }
       button { background-color: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
       button:hover { background-color: #45a049; }
-      .token-info { background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-top: 10px; }
-      .step { font-weight: bold; margin-top: 15px; }
     </style>
   </head>
   <body>
@@ -123,16 +121,8 @@ export default {
       <h1>작품 그룹 생성</h1>
       
       <div class="card">
-        <h2>1단계: Entry 토큰 가져오기</h2>
-        <p>아래 버튼을 클릭하여 Entry 사이트에서 토큰을 가져옵니다.</p>
-        <form method="POST" action="/fetch-tokens">
-          <button type="submit">Entry 토큰 가져오기</button>
-        </form>
-      </div>
-      
-      <div class="card">
-        <h2>2단계: 프로젝트 그룹 생성</h2>
-        <p>토큰을 가져온 후 프로젝트 URL을 입력하고 그룹을 생성하세요.</p>
+        <h2>프로젝트 그룹 생성</h2>
+        <p>프로젝트 URL을 입력하고 그룹을 생성하세요.</p>
         <form method="POST" action="/create" id="createForm">
           <div>
             <label for="urls">프로젝트 URL 목록:</label>
@@ -148,94 +138,16 @@ export default {
         headers: { "Content-Type": "text/html;charset=UTF-8" },
       });
     }
-
-    // Entry 토큰 가져오기 (POST "/fetch-tokens")
-    if (url.pathname === "/fetch-tokens" && request.method === "POST") {
-      try {
-        // Entry 사이트에서 토큰 가져오기
-        const tokens = await fetchEntryTokens();
-        
-        // 세션에 토큰 저장 (R2 임시 저장소 활용)
-        const sessionId = Math.random().toString(36).substring(2, 15);
-        await env.PROJECT_GROUPS.put("session:" + sessionId, JSON.stringify(tokens), {
-          expirationTtl: 3600 // 1시간 후 만료
-        });
-        
-        const responseHtml = `<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8">
-    <title>토큰 가져오기 완료</title>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; line-height: 1.6; }
-      .container { max-width: 800px; margin: 0 auto; }
-      .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-      h1, h2 { color: #333; }
-      .token-info { background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
-      .success { color: #4CAF50; }
-      button { background-color: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
-      button:hover { background-color: #45a049; }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <h1>토큰 가져오기 완료</h1>
-      <div class="card">
-        <h2 class="success">토큰 가져오기 성공!</h2>
-        <div class="token-info">
-          <p><strong>CSRF 토큰:</strong> ${tokens.csrfToken.substring(0, 10)}...</p>
-          <p><strong>X-Token:</strong> ${tokens.xToken ? tokens.xToken.substring(0, 10) + '...' : '없음'}</p>
-          <p><strong>세션 ID:</strong> ${sessionId}</p>
-        </div>
-        <p>이제 프로젝트 그룹을 생성할 수 있습니다.</p>
-        <form method="POST" action="/create">
-          <input type="hidden" name="sessionId" value="${sessionId}">
-          <div>
-            <label for="urls">프로젝트 URL 목록:</label><br>
-            <textarea name="urls" id="urls" rows="10" style="width: 100%;" placeholder="https://playentry.org/project/프로젝트ID 를 한 줄에 하나씩 입력"></textarea>
-          </div>
-          <br>
-          <button type="submit">작품 그룹 생성</button>
-        </form>
-        <p><a href="/">처음으로 돌아가기</a></p>
-      </div>
-    </div>
-  </body>
-</html>`;
-        return new Response(responseHtml, {
-          headers: { "Content-Type": "text/html;charset=UTF-8" },
-        });
-      } catch (err) {
-        console.error("Error fetching tokens:", err);
-        return new Response("토큰 가져오기 실패: " + err.message, {
-          headers: { "Content-Type": "text/plain;charset=UTF-8" },
-          status: 500,
-        });
-      }
-    }
     
     // 그룹 생성 처리 (POST "/create")
     if (url.pathname === "/create" && request.method === "POST") {
       try {
         const formData = await request.formData();
         const urlsText = formData.get("urls");
-        const sessionId = formData.get("sessionId");
         
         if (!urlsText) {
           return new Response("URL이 입력되지 않았습니다.", { status: 400 });
         }
-        
-        if (!sessionId) {
-          return new Response("세션 ID가 없습니다. 먼저 토큰을 가져와주세요.", { status: 400 });
-        }
-        
-        // 세션에서 토큰 가져오기
-        const sessionObj = await env.PROJECT_GROUPS.get("session:" + sessionId);
-        if (!sessionObj) {
-          return new Response("세션이 만료되었거나 존재하지 않습니다. 다시 토큰을 가져와주세요.", { status: 400 });
-        }
-        
-        const tokens = JSON.parse(await sessionObj.text());
         
         // 줄 단위로 분리 후 유효한 URL 필터링
         const urls = urlsText
@@ -250,11 +162,7 @@ export default {
         // 8자리 그룹 코드 생성
         const code = Math.random().toString(36).substring(2, 10);
         // R2 버킷 (PROJECT_GROUPS 바인딩) 저장 (JSON 형태)
-        await env.PROJECT_GROUPS.put(code, JSON.stringify({ 
-          urls,
-          csrfToken: tokens.csrfToken,
-          xToken: tokens.xToken 
-        }));
+        await env.PROJECT_GROUPS.put(code, JSON.stringify({ urls }));
         
         const domain = url.hostname;
         const responseHtml = `<!DOCTYPE html>
@@ -309,8 +217,13 @@ export default {
         }
         const stored = await object.json();
         const urls = stored.urls;
-        const csrfToken = stored.csrfToken || "";
-        const xToken = stored.xToken || "";
+        
+        // 토큰 가져오기 (Entry 사이트에서 직접 가져옴)
+        const tokens = await fetchEntryTokens();
+        console.log("Entry 토큰 가져옴:", {
+          csrfToken: tokens.csrfToken.substring(0, 10) + "...",
+          xToken: tokens.xToken ? tokens.xToken.substring(0, 10) + "..." : "없음"
+        });
         
         let listItems = "";
         // 각 프로젝트 URL 처리
@@ -342,14 +255,14 @@ export default {
               `,
               variables: { id: projectId },
             });
-            // 헤더 구성 (추출한 토큰 사용)
+            // 헤더 구성 (가져온 토큰 사용)
             const headers = {
               "accept": "*/*",
               "content-type": "application/json",
-              "csrf-token": csrfToken,
-              "x-token": xToken,
+              "csrf-token": tokens.csrfToken,
+              "x-token": tokens.xToken,
             };
-            console.log(`API 요청 토큰 - CSRF: ${csrfToken.substring(0, 10)}..., X-Token: ${xToken ? xToken.substring(0, 10) + '...' : '없음'}`);
+            console.log(`API 요청 토큰 - CSRF: ${tokens.csrfToken.substring(0, 10)}..., X-Token: ${tokens.xToken ? tokens.xToken.substring(0, 10) + '...' : '없음'}`);
             
             const projectResponse = await fetch(
               "https://playentry.org/graphql/SELECT_PROJECT_LITE",
