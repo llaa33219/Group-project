@@ -13,137 +13,196 @@ function escapeHtml(html) {
 // 주어진 HTML에서 CSRF 토큰과 x-token을 추출하는 함수
 function extractTokensFromHtml(html) {
   // CSRF 토큰 추출
-  let csrfToken = extractCsrfTokenFromHtml(html);
+  const csrfResult = extractCsrfTokenFromHtml(html);
   
   // X-Token 추출
-  let xToken = extractXTokenFromHtml(html);
+  const xTokenResult = extractXTokenFromHtml(html);
   
-  return { csrfToken, xToken };
+  console.log("토큰 추출 요약:");
+  console.log(`- CSRF 토큰: ${csrfResult.token ? '찾음' : '찾지 못함'} (방법: ${csrfResult.method})`);
+  console.log(`- X-Token: ${xTokenResult.token ? '찾음' : '찾지 못함'} (방법: ${xTokenResult.method})`);
+  
+  return { 
+    csrfToken: csrfResult.token, 
+    xToken: xTokenResult.token,
+    csrfMethod: csrfResult.method,
+    xTokenMethod: xTokenResult.method
+  };
 }
 
 // CSRF 토큰 추출 함수
 function extractCsrfTokenFromHtml(html) {
   let csrfToken = null;
+  let method = "";
+  
+  console.log("CSRF 토큰 추출 시작...");
   
   // 1. 먼저 meta 태그에서 찾기 (self-closing 포함)
+  console.log("1. meta 태그에서 CSRF 토큰 찾기 시도...");
   let match = html.match(/<meta\s+[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
   if (match) {
     csrfToken = match[1];
-    return csrfToken;
+    method = "meta 태그";
+    console.log(`✅ meta 태그에서 CSRF 토큰 찾음: ${csrfToken.substring(0, 10)}...`);
+    return { token: csrfToken, method };
   }
+  console.log("❌ meta 태그에서 CSRF 토큰을 찾지 못함");
   
   // 2. HTML 내의 스크립트에서 찾기
+  console.log("2. 스크립트 태그에서 CSRF 토큰 찾기 시도...");
   const scriptPattern = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
+  let scriptCount = 0;
+  
   while ((scriptMatch = scriptPattern.exec(html)) !== null) {
+    scriptCount++;
     const scriptContent = scriptMatch[1];
     
     // 다양한 CSRF 토큰 패턴 찾기
     const csrfPatterns = [
-      /csrfToken[\s]*[=:][\s]*["']([^"']+)["']/,
-      /"csrf-token"[\s]*[=:][\s]*["']([^"']+)["']/,
-      /csrf_token[\s]*[=:][\s]*["']([^"']+)["']/
+      { pattern: /csrfToken[\s]*[=:][\s]*["']([^"']+)["']/, name: "csrfToken 변수" },
+      { pattern: /"csrf-token"[\s]*[=:][\s]*["']([^"']+)["']/, name: "csrf-token JSON 키" },
+      { pattern: /csrf_token[\s]*[=:][\s]*["']([^"']+)["']/, name: "csrf_token 변수" }
     ];
     
-    for (const pattern of csrfPatterns) {
+    for (const { pattern, name } of csrfPatterns) {
       match = scriptContent.match(pattern);
       if (match && match[1]) {
         csrfToken = match[1];
-        return csrfToken;
+        method = `스크립트 내 ${name}`;
+        console.log(`✅ 스크립트 #${scriptCount}의 ${name}에서 CSRF 토큰 찾음: ${csrfToken.substring(0, 10)}...`);
+        return { token: csrfToken, method };
       }
     }
   }
+  console.log(`❌ ${scriptCount}개의 스크립트 태그에서 CSRF 토큰을 찾지 못함`);
   
   // 3. 폼 요소에서 찾기
+  console.log("3. 폼 입력 요소에서 CSRF 토큰 찾기 시도...");
   const formInputPatterns = [
-    /<input[^>]*name=["']_csrf["'][^>]*value=["']([^"']+)["'][^>]*>/i,
-    /<input[^>]*name=["']csrf-token["'][^>]*value=["']([^"']+)["'][^>]*>/i,
-    /<input[^>]*name=["']csrf["'][^>]*value=["']([^"']+)["'][^>]*>/i
+    { pattern: /<input[^>]*name=["']_csrf["'][^>]*value=["']([^"']+)["'][^>]*>/i, name: "_csrf 입력" },
+    { pattern: /<input[^>]*name=["']csrf-token["'][^>]*value=["']([^"']+)["'][^>]*>/i, name: "csrf-token 입력" },
+    { pattern: /<input[^>]*name=["']csrf["'][^>]*value=["']([^"']+)["'][^>]*>/i, name: "csrf 입력" }
   ];
   
-  for (const pattern of formInputPatterns) {
+  for (const { pattern, name } of formInputPatterns) {
     match = html.match(pattern);
     if (match && match[1]) {
       csrfToken = match[1];
-      return csrfToken;
+      method = `폼 ${name}`;
+      console.log(`✅ ${name}에서 CSRF 토큰 찾음: ${csrfToken.substring(0, 10)}...`);
+      return { token: csrfToken, method };
     }
   }
+  console.log("❌ 폼 입력 요소에서 CSRF 토큰을 찾지 못함");
   
   // 4. 인라인 JSON 패턴 확인
+  console.log("4. 인라인 JSON에서 CSRF 토큰 찾기 시도...");
   match = html.match(/"csrf-token"\s*:\s*"([^"]+)"/i);
   if (match) {
     csrfToken = match[1];
-    return csrfToken;
+    method = "인라인 JSON";
+    console.log(`✅ 인라인 JSON에서 CSRF 토큰 찾음: ${csrfToken.substring(0, 10)}...`);
+    return { token: csrfToken, method };
   }
+  console.log("❌ 인라인 JSON에서 CSRF 토큰을 찾지 못함");
   
-  return csrfToken;
+  console.log("⚠️ 모든 방법으로 CSRF 토큰 추출 시도 실패");
+  return { token: null, method: "찾지 못함" };
 }
 
 // X-Token 추출 함수
 function extractXTokenFromHtml(html) {
   let xToken = null;
+  let method = "";
+  
+  console.log("X-Token 추출 시작...");
   
   // 1. 먼저 meta 태그에서 찾기
+  console.log("1. meta 태그에서 X-Token 찾기 시도...");
   let match = html.match(/<meta\s+[^>]*name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
   if (match) {
     xToken = match[1];
-    return xToken;
+    method = "meta 태그";
+    console.log(`✅ meta 태그에서 X-Token 찾음: ${xToken.substring(0, 10)}...`);
+    return { token: xToken, method };
   }
+  console.log("❌ meta 태그에서 X-Token을 찾지 못함");
   
   // 2. HTML 내의 스크립트에서 X-Token 찾기
+  console.log("2. 스크립트 태그에서 X-Token 찾기 시도...");
   const scriptPattern = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let scriptMatch;
+  let scriptCount = 0;
+  
   while ((scriptMatch = scriptPattern.exec(html)) !== null) {
+    scriptCount++;
     const scriptContent = scriptMatch[1];
     
     // X-Token을 포함할 수 있는 다양한 패턴 찾기
     const tokenPatterns = [
-      /token[\s]*[=:][\s]*["']([^"']+)["']/,
-      /x-token[\s]*[=:][\s]*["']([^"']+)["']/,
-      /xToken[\s]*[=:][\s]*["']([^"']+)["']/,
-      /authToken[\s]*[=:][\s]*["']([^"']+)["']/
+      { pattern: /token[\s]*[=:][\s]*["']([^"']+)["']/, name: "token 변수" },
+      { pattern: /x-token[\s]*[=:][\s]*["']([^"']+)["']/, name: "x-token 변수" },
+      { pattern: /xToken[\s]*[=:][\s]*["']([^"']+)["']/, name: "xToken 변수" },
+      { pattern: /authToken[\s]*[=:][\s]*["']([^"']+)["']/, name: "authToken 변수" }
     ];
     
-    for (const pattern of tokenPatterns) {
+    for (const { pattern, name } of tokenPatterns) {
       match = scriptContent.match(pattern);
       if (match && match[1]) {
         xToken = match[1];
-        return xToken;
+        method = `스크립트 내 ${name}`;
+        console.log(`✅ 스크립트 #${scriptCount}의 ${name}에서 X-Token 찾음: ${xToken.substring(0, 10)}...`);
+        return { token: xToken, method };
       }
     }
   }
+  console.log(`❌ ${scriptCount}개의 스크립트 태그에서 X-Token을 찾지 못함`);
   
   // 3. data 속성에서 찾기
+  console.log("3. HTML 요소의 data 속성에서 X-Token 찾기 시도...");
   const dataAttrPatterns = [
-    /<[^>]*data-token=["']([^"']+)["'][^>]*>/i,
-    /<[^>]*data-x-token=["']([^"']+)["'][^>]*>/i
+    { pattern: /<[^>]*data-token=["']([^"']+)["'][^>]*>/i, name: "data-token 속성" },
+    { pattern: /<[^>]*data-x-token=["']([^"']+)["'][^>]*>/i, name: "data-x-token 속성" }
   ];
   
-  for (const pattern of dataAttrPatterns) {
+  for (const { pattern, name } of dataAttrPatterns) {
     match = html.match(pattern);
     if (match && match[1]) {
       xToken = match[1];
-      return xToken;
+      method = `HTML ${name}`;
+      console.log(`✅ HTML 요소의 ${name}에서 X-Token 찾음: ${xToken.substring(0, 10)}...`);
+      return { token: xToken, method };
     }
   }
+  console.log("❌ HTML 요소의 data 속성에서 X-Token을 찾지 못함");
   
   // 4. JWT 패턴 찾기 (페이지 전체에서)
+  console.log("4. JWT 패턴으로 X-Token 찾기 시도...");
   const jwtPattern = /eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[^"'\s<>]+\.[^"'\s<>]+/g;
   const jwtMatches = html.match(jwtPattern);
   
   if (jwtMatches && jwtMatches.length > 0) {
     xToken = jwtMatches[0]; // 첫 번째 JWT 형식 토큰 사용
-    return xToken;
+    method = "JWT 패턴";
+    console.log(`✅ JWT 패턴으로 X-Token 찾음: ${xToken.substring(0, 10)}...`);
+    return { token: xToken, method };
   }
+  console.log("❌ JWT 패턴으로 X-Token을 찾지 못함");
   
   // 5. 인라인 JSON 패턴 확인
+  console.log("5. 인라인 JSON에서 X-Token 찾기 시도...");
   match = html.match(/"x-token"\s*:\s*"([^"]+)"/i);
   if (match) {
     xToken = match[1];
-    return xToken;
+    method = "인라인 JSON";
+    console.log(`✅ 인라인 JSON에서 X-Token 찾음: ${xToken.substring(0, 10)}...`);
+    return { token: xToken, method };
   }
+  console.log("❌ 인라인 JSON에서 X-Token을 찾지 못함");
   
-  return xToken;
+  console.log("⚠️ 모든 방법으로 X-Token 추출 시도 실패");
+  return { token: null, method: "찾지 못함" };
 }
 
 // 프로젝트 페이지에서 토큰을 추출하는 함수
@@ -167,14 +226,27 @@ async function extractTokensFromProject(projectId) {
   const sanitizedHtml = html.replace(/<script[\s\S]*?<\/script>/gi, "");
   console.log("Sanitized HTML snippet:", sanitizedHtml.substring(0, 500));
   const tokens = extractTokensFromHtml(html); // 여기서는 원본 HTML 사용(스크립트 포함)
+  
+  // 토큰 추출 결과 상세 로깅
   if (!tokens.csrfToken) {
     throw new Error(
-      "토큰 추출에 실패했습니다. CSRF 토큰을 찾을 수 없습니다. HTML snippet:\n" +
-        escapeHtml(sanitizedHtml)
+      `토큰 추출 실패 정보:
+      - CSRF 토큰: 찾지 못함 (시도한 방법: ${tokens.csrfMethod})
+      - X-Token: ${tokens.xToken ? '찾음' : '찾지 못함'} (시도한 방법: ${tokens.xTokenMethod})
+      
+      HTML snippet 샘플 (처음 200자):
+      ${escapeHtml(html.substring(0, 200))}...`
     );
   }
+  
   // xToken은 없으면 빈 문자열로 처리
-  return { csrfToken: tokens.csrfToken, xToken: tokens.xToken ? tokens.xToken : "" };
+  console.log(`프로젝트 ${projectId}의 토큰 추출 성공: CSRF(${tokens.csrfMethod}), X-Token(${tokens.xTokenMethod})`);
+  return { 
+    csrfToken: tokens.csrfToken, 
+    xToken: tokens.xToken ? tokens.xToken : "", 
+    csrfMethod: tokens.csrfMethod,
+    xTokenMethod: tokens.xTokenMethod
+  };
 }
 
 export default {
