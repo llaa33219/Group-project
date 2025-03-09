@@ -10,60 +10,13 @@ function escapeHtml(html) {
     .replace(/'/g, "&#039;");
 }
 
-// 주어진 HTML에서 CSRF 토큰과 x-token을 추출하는 함수
-function extractTokensFromHtml(html) {
-  let csrfToken = null;
-  let xToken = null;
-
-  // 1. 메타 태그 패턴 (self-closing 포함)
-  let match = html.match(/<meta\s+[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
-  if (match) {
-    csrfToken = match[1];
-  }
+// 프로젝트 페이지에서 직접 프로젝트 정보 추출
+async function extractProjectInfo(projectId) {
+  console.log(`프로젝트 정보 추출 시도: ${projectId}`);
+  const projectUrl = `https://playentry.org/project/${projectId}`;
   
-  match = html.match(/<meta\s+[^>]*name=["']x-token["'][^>]*content=["']([^"']+)["']\s*\/?>/i);
-  if (match) {
-    xToken = match[1];
-  }
-
-  // 2. 인라인 JSON 패턴 (예: "csrf-token": "값")
-  if (!csrfToken) {
-    match = html.match(/"csrf-token"\s*:\s*"([^"]+)"/i);
-    if (match) {
-      csrfToken = match[1];
-    }
-  }
-  
-  if (!xToken) {
-    match = html.match(/"x-token"\s*:\s*"([^"]+)"/i);
-    if (match) {
-      xToken = match[1];
-    }
-  }
-  
-  // 3. JavaScript 변수 패턴 (예: window._CSRF_TOKEN = "값")
-  if (!csrfToken) {
-    match = html.match(/[_$a-zA-Z0-9]+\.?[_$a-zA-Z0-9]*\s*=\s*["']([^"']{20,})["'].*csrf/i);
-    if (match) {
-      csrfToken = match[1];
-    }
-  }
-  
-  if (!xToken) {
-    match = html.match(/[_$a-zA-Z0-9]+\.?[_$a-zA-Z0-9]*\s*=\s*["']([^"']{20,})["'].*token/i);
-    if (match) {
-      xToken = match[1];
-    }
-  }
-
-  return { csrfToken, xToken };
-}
-
-// Entry 사이트에서 토큰을 가져오는 함수
-async function fetchEntryTokens() {
-  console.log("Entry 사이트에서 토큰 가져오기 시도");
-  const entryUrl = "https://playentry.org/";
-  const res = await fetch(entryUrl, {
+  // 프로젝트 페이지 요청
+  const res = await fetch(projectUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -71,26 +24,92 @@ async function fetchEntryTokens() {
   });
   
   if (!res.ok) {
-    throw new Error(`Entry 사이트 요청 실패: ${res.status}`);
+    throw new Error(`프로젝트 페이지 요청 실패: ${res.status}`);
   }
   
+  // HTML 파싱
   const html = await res.text();
-  console.log("Entry HTML 스니펫 (처음 500자):", html.substring(0, 500));
+  console.log(`프로젝트 ${projectId} HTML 길이: ${html.length}`);
   
-  // CSRF 토큰과 x-token 추출
-  const tokens = extractTokensFromHtml(html);
-  console.log("추출된 토큰:", {
-    csrfToken: tokens.csrfToken ? tokens.csrfToken.substring(0, 10) + '...' : '없음',
-    xToken: tokens.xToken ? tokens.xToken.substring(0, 10) + '...' : '없음'
-  });
+  // 프로젝트 제목 추출
+  const titleMatch = html.match(/<title>(.*?) - Entry<\/title>/i) || 
+                     html.match(/<title>(.*?)<\/title>/i) ||
+                     html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
+  const title = titleMatch ? titleMatch[1] : `프로젝트 ${projectId}`;
   
-  if (!tokens.csrfToken) {
-    throw new Error("CSRF 토큰을 찾을 수 없습니다.");
+  // 썸네일 추출
+  const thumbMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) ||
+                     html.match(/["']thumb["']\s*:\s*["']([^"']+)["']/i);
+  const thumb = thumbMatch ? thumbMatch[1] : '';
+  
+  // 사용자 정보 추출
+  const userIdMatch = html.match(/\/profile\/([A-Za-z0-9]+)/i);
+  const userId = userIdMatch ? userIdMatch[1] : '';
+  
+  const userNicknameMatch = html.match(/["']nickname["']\s*:\s*["']([^"']+)["']/i);
+  const userNickname = userNicknameMatch ? userNicknameMatch[1] : '';
+  
+  // 프로필 이미지 추출
+  const profileImageMatch = html.match(/["']profileImage["'][\s\S]*?["']filename["']\s*:\s*["']([^"']+)["']/i);
+  const profileImage = profileImageMatch ? profileImageMatch[1] : '';
+  
+  // 통계 정보 추출
+  const visitMatch = html.match(/["']visit["']\s*:\s*(\d+)/i);
+  const visit = visitMatch ? parseInt(visitMatch[1]) : 0;
+  
+  const likeCntMatch = html.match(/["']likeCnt["']\s*:\s*(\d+)/i);
+  const likeCnt = likeCntMatch ? parseInt(likeCntMatch[1]) : 0;
+  
+  const commentMatch = html.match(/["']comment["']\s*:\s*(\d+)/i);
+  const comment = commentMatch ? parseInt(commentMatch[1]) : 0;
+  
+  // JSON 데이터 추출 시도 (페이지에 포함된 초기 상태)
+  let jsonData = null;
+  try {
+    const jsonMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?});/);
+    if (jsonMatch) {
+      jsonData = JSON.parse(jsonMatch[1]);
+      console.log("Initial state JSON 데이터 추출 성공");
+    }
+  } catch (e) {
+    console.error("JSON 데이터 파싱 실패:", e);
   }
   
-  return { 
-    csrfToken: tokens.csrfToken, 
-    xToken: tokens.xToken || "" 
+  // JSON 데이터에서 더 정확한 정보 추출 시도
+  if (jsonData && jsonData.project && jsonData.project.project) {
+    const projectData = jsonData.project.project;
+    return {
+      id: projectId,
+      name: projectData.name || title,
+      thumb: projectData.thumb || thumb,
+      user: {
+        id: projectData.user?.id || userId,
+        nickname: projectData.user?.nickname || userNickname,
+        profileImage: {
+          filename: projectData.user?.profileImage?.filename || profileImage
+        }
+      },
+      visit: projectData.visit || visit,
+      likeCnt: projectData.likeCnt || likeCnt,
+      comment: projectData.comment || comment
+    };
+  }
+  
+  // 기본 추출 정보 반환
+  return {
+    id: projectId,
+    name: title,
+    thumb: thumb,
+    user: {
+      id: userId,
+      nickname: userNickname,
+      profileImage: {
+        filename: profileImage
+      }
+    },
+    visit: visit,
+    likeCnt: likeCnt,
+    comment: comment
   };
 }
 
@@ -218,13 +237,6 @@ export default {
         const stored = await object.json();
         const urls = stored.urls;
         
-        // 토큰 가져오기 (Entry 사이트에서 직접 가져옴)
-        const tokens = await fetchEntryTokens();
-        console.log("Entry 토큰 가져옴:", {
-          csrfToken: tokens.csrfToken.substring(0, 10) + "...",
-          xToken: tokens.xToken ? tokens.xToken.substring(0, 10) + "..." : "없음"
-        });
-        
         let listItems = "";
         // 각 프로젝트 URL 처리
         for (const projectUrl of urls) {
@@ -232,59 +244,10 @@ export default {
           if (!match) continue;
           const projectId = match[1];
           try {
-            // GraphQL 요청 본문 구성 (SELECT_PROJECT_LITE 사용)
-            const graphqlBody = JSON.stringify({
-              query: `
-                query SELECT_PROJECT_LITE($id: ID! $groupId: ID) {
-                  project(id: $id, groupId: $groupId) {
-                    id
-                    name
-                    user {
-                      id
-                      nickname
-                      profileImage {
-                        filename
-                      }
-                    }
-                    thumb
-                    visit
-                    likeCnt
-                    comment
-                  }
-                }
-              `,
-              variables: { id: projectId },
-            });
-            // 헤더 구성 (가져온 토큰 사용)
-            const headers = {
-              "accept": "*/*",
-              "content-type": "application/json",
-              "csrf-token": tokens.csrfToken,
-              "x-token": tokens.xToken,
-            };
-            console.log(`API 요청 토큰 - CSRF: ${tokens.csrfToken.substring(0, 10)}..., X-Token: ${tokens.xToken ? tokens.xToken.substring(0, 10) + '...' : '없음'}`);
+            // 프로젝트 페이지에서 직접 정보 추출
+            const project = await extractProjectInfo(projectId);
+            console.log(`프로젝트 ${projectId} 정보 추출 성공:`, project.name);
             
-            const projectResponse = await fetch(
-              "https://playentry.org/graphql/SELECT_PROJECT_LITE",
-              {
-                method: "POST",
-                headers,
-                body: graphqlBody,
-              }
-            );
-            const responseText = await projectResponse.text();
-            console.log("GraphQL response text for project", projectId, responseText);
-            let projectData;
-            try {
-              projectData = JSON.parse(responseText);
-            } catch (e) {
-              throw new Error("GraphQL 응답 파싱 실패: " + e.message);
-            }
-            if (projectData.errors) {
-              console.error("GraphQL errors:", projectData.errors);
-              throw new Error("GraphQL 요청 실패: " + JSON.stringify(projectData.errors));
-            }
-            const project = projectData.data.project;
             listItems += `<li class="project-item">
   <div class="project-card">
     <div class="project-thumb" style="background-image: url('${project.thumb}'), url('/img/DefaultCardThmb.svg');">
