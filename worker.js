@@ -64,11 +64,11 @@ async function extractProjectInfo(projectId) {
   const titleMatch = html.match(/<title>(.*?) - Entry<\/title>/i) || 
                      html.match(/<title>(.*?)<\/title>/i) ||
                      html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
-  const title = titleMatch ? titleMatch[1] : `프로젝트 ${projectId}`;
+  let title = titleMatch ? titleMatch[1] : `프로젝트 ${projectId}`;
   
   const thumbMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) ||
                      html.match(/["']thumb["']\s*:\s*["']([^"']+)["']/i);
-  const thumb = thumbMatch ? thumbMatch[1] : '';
+  let thumb = thumbMatch ? thumbMatch[1] : '';
   
   // 4. 사용자 정보 추출
   let userId = '', userNickname = '', profileImage = '';
