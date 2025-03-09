@@ -31,71 +31,135 @@ async function extractProjectInfo(projectId) {
   const html = await res.text();
   console.log(`프로젝트 ${projectId} HTML 길이: ${html.length}`);
   
-  // 프로젝트 제목 추출
+  // 1. window.__INITIAL_STATE__ JSON 데이터 추출 시도 (가장 정확한 방법)
+  let initialState = null;
+  try {
+    const stateMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?});/i);
+    if (stateMatch) {
+      initialState = JSON.parse(stateMatch[1]);
+      console.log("Initial state 데이터 추출 성공");
+    }
+  } catch (e) {
+    console.error("Initial state JSON 데이터 파싱 실패:", e);
+  }
+  
+  // 2. Redux 상태나 기타 스크립트 내 데이터 추출 시도
+  let projectData = null;
+  if (!initialState && html.includes('class="common_gnb')) {
+    try {
+      // 스크립트 태그 안에 있는 JSON 데이터 찾기
+      const scriptDataMatch = html.match(/"projectInfo"\s*:\s*({[\s\S]*?}),\s*"(?:isLike|isPracticalCourse|categoryCode)"/i);
+      if (scriptDataMatch) {
+        // JSON 문자열 보정
+        const jsonStr = scriptDataMatch[1].replace(/,\s*}/g, '}').replace(/'/g, '"');
+        projectData = JSON.parse(jsonStr);
+        console.log("Script 데이터에서 프로젝트 정보 추출 성공");
+      }
+    } catch (e) {
+      console.error("Script 데이터 파싱 실패:", e);
+    }
+  }
+  
+  // 3. HTML 메타데이터에서 기본 정보 추출
   const titleMatch = html.match(/<title>(.*?) - Entry<\/title>/i) || 
                      html.match(/<title>(.*?)<\/title>/i) ||
                      html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
   const title = titleMatch ? titleMatch[1] : `프로젝트 ${projectId}`;
   
-  // 썸네일 추출
   const thumbMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) ||
                      html.match(/["']thumb["']\s*:\s*["']([^"']+)["']/i);
   const thumb = thumbMatch ? thumbMatch[1] : '';
   
-  // 사용자 정보 추출
-  const userIdMatch = html.match(/\/profile\/([A-Za-z0-9]+)/i);
-  const userId = userIdMatch ? userIdMatch[1] : '';
+  // 4. 사용자 정보 추출
+  let userId = '', userNickname = '', profileImage = '';
+  
+  // 정규식을 이용한 추출 시도
+  const userIdMatch = html.match(/\/profile\/([A-Za-z0-9]+)["']/i);
+  if (userIdMatch) userId = userIdMatch[1];
   
   const userNicknameMatch = html.match(/["']nickname["']\s*:\s*["']([^"']+)["']/i);
-  const userNickname = userNicknameMatch ? userNicknameMatch[1] : '';
+  if (userNicknameMatch) userNickname = userNicknameMatch[1];
   
-  // 프로필 이미지 추출
   const profileImageMatch = html.match(/["']profileImage["'][\s\S]*?["']filename["']\s*:\s*["']([^"']+)["']/i);
-  const profileImage = profileImageMatch ? profileImageMatch[1] : '';
+  if (profileImageMatch) profileImage = profileImageMatch[1];
   
-  // 통계 정보 추출
-  const visitMatch = html.match(/["']visit["']\s*:\s*(\d+)/i);
-  const visit = visitMatch ? parseInt(visitMatch[1]) : 0;
+  // 5. 통계 정보 추출 (여러 패턴 시도)
+  let visit = 0, likeCnt = 0, comment = 0, saveCount = 0;
   
-  const likeCntMatch = html.match(/["']likeCnt["']\s*:\s*(\d+)/i);
-  const likeCnt = likeCntMatch ? parseInt(likeCntMatch[1]) : 0;
+  // 정확한 통계 블록 찾기
+  const statsBlockMatch = html.match(/<div[^>]*class=["'][^"']*ProjectInfo_stats[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+  if (statsBlockMatch) {
+    const statsBlock = statsBlockMatch[1];
+    
+    // 각 통계 정보 추출 시도
+    const viewMatch = statsBlock.match(/view[^>]*>(\d+)/i);
+    if (viewMatch) visit = parseInt(viewMatch[1]);
+    
+    const likeMatch = statsBlock.match(/like[^>]*>(\d+)/i);
+    if (likeMatch) likeCnt = parseInt(likeMatch[1]);
+    
+    const commentMatch = statsBlock.match(/comment[^>]*>(\d+)/i);
+    if (commentMatch) comment = parseInt(commentMatch[1]);
+    
+    const bookmarkMatch = statsBlock.match(/bookmark[^>]*>(\d+)/i);
+    if (bookmarkMatch) saveCount = parseInt(bookmarkMatch[1]);
+  }
   
-  const commentMatch = html.match(/["']comment["']\s*:\s*(\d+)/i);
-  const comment = commentMatch ? parseInt(commentMatch[1]) : 0;
+  // 일반 정규식으로 백업 추출
+  if (visit === 0) {
+    const visitMatch = html.match(/["']visit["']\s*:\s*(\d+)/i) || 
+                       html.match(/조회\s*<em[^>]*>(\d+)/i);
+    if (visitMatch) visit = parseInt(visitMatch[1]);
+  }
   
-  // JSON 데이터 추출 시도 (페이지에 포함된 초기 상태)
-  let jsonData = null;
-  try {
-    const jsonMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?});/);
-    if (jsonMatch) {
-      jsonData = JSON.parse(jsonMatch[1]);
-      console.log("Initial state JSON 데이터 추출 성공");
+  if (likeCnt === 0) {
+    const likeCntMatch = html.match(/["']likeCnt["']\s*:\s*(\d+)/i) ||
+                         html.match(/좋아요\s*<em[^>]*>(\d+)/i);
+    if (likeCntMatch) likeCnt = parseInt(likeCntMatch[1]);
+  }
+  
+  if (comment === 0) {
+    const commentMatch = html.match(/["']comment["']\s*:\s*(\d+)/i) ||
+                         html.match(/댓글\s*<em[^>]*>(\d+)/i);
+    if (commentMatch) comment = parseInt(commentMatch[1]);
+  }
+  
+  if (saveCount === 0) {
+    const saveCountMatch = html.match(/["']saveCount["']\s*:\s*(\d+)/i) ||
+                           html.match(/저장\s*<em[^>]*>(\d+)/i);
+    if (saveCountMatch) saveCount = parseInt(saveCountMatch[1]);
+  }
+  
+  // 6. 초기 상태에서 가장 정확한 데이터 추출
+  if (initialState && initialState.project && initialState.project.project) {
+    const stateProject = initialState.project.project;
+    
+    // 필요한 정보 덮어쓰기
+    if (stateProject.name) title = stateProject.name;
+    if (stateProject.thumb) thumb = stateProject.thumb;
+    if (stateProject.visit) visit = stateProject.visit;
+    if (stateProject.likeCnt) likeCnt = stateProject.likeCnt;
+    if (stateProject.comment) comment = stateProject.comment;
+    if (stateProject.saveCount) saveCount = stateProject.saveCount;
+    
+    if (stateProject.user) {
+      if (stateProject.user.id) userId = stateProject.user.id;
+      if (stateProject.user.nickname) userNickname = stateProject.user.nickname;
+      if (stateProject.user.profileImage && stateProject.user.profileImage.filename) {
+        profileImage = stateProject.user.profileImage.filename;
+      }
     }
-  } catch (e) {
-    console.error("JSON 데이터 파싱 실패:", e);
   }
   
-  // JSON 데이터에서 더 정확한 정보 추출 시도
-  if (jsonData && jsonData.project && jsonData.project.project) {
-    const projectData = jsonData.project.project;
-    return {
-      id: projectId,
-      name: projectData.name || title,
-      thumb: projectData.thumb || thumb,
-      user: {
-        id: projectData.user?.id || userId,
-        nickname: projectData.user?.nickname || userNickname,
-        profileImage: {
-          filename: projectData.user?.profileImage?.filename || profileImage
-        }
-      },
-      visit: projectData.visit || visit,
-      likeCnt: projectData.likeCnt || likeCnt,
-      comment: projectData.comment || comment
-    };
-  }
+  console.log(`프로젝트 ${projectId} 정보 추출 결과:`, {
+    title,
+    visit,
+    likeCnt,
+    comment,
+    saveCount
+  });
   
-  // 기본 추출 정보 반환
+  // 최종 결과 반환
   return {
     id: projectId,
     name: title,
@@ -109,7 +173,8 @@ async function extractProjectInfo(projectId) {
     },
     visit: visit,
     likeCnt: likeCnt,
-    comment: comment
+    comment: comment,
+    saveCount: saveCount
   };
 }
 
@@ -265,6 +330,7 @@ export default {
       <span class="stat"><i class="icon-view"></i> ${project.visit || 0}</span>
       <span class="stat"><i class="icon-like"></i> ${project.likeCnt || 0}</span>
       <span class="stat"><i class="icon-comment"></i> ${project.comment || 0}</span>
+      <span class="stat"><i class="icon-bookmark"></i> ${project.saveCount || 0}</span>
     </div>
   </div>
 </li>`;
@@ -299,6 +365,7 @@ export default {
       .icon-view:before { content: "👁️"; margin-right: 5px; }
       .icon-like:before { content: "❤️"; margin-right: 5px; }
       .icon-comment:before { content: "💬"; margin-right: 5px; }
+      .icon-bookmark:before { content: "🔖"; margin-right: 5px; }
       .home-link { display: block; text-align: center; margin-top: 20px; color: #1a73e8; text-decoration: none; }
       .home-link:hover { text-decoration: underline; }
     </style>
