@@ -74,15 +74,96 @@ export default {
     <meta charset="UTF-8">
     <title>작품 그룹 생성</title>
     <script>
-      // 페이지 로드 시 로컬 스토리지에서 playentry_token 값을 가져와 토큰 입력란에 자동 기입
+      // 디버깅을 위한 함수
+      function debugLocalStorage() {
+        try {
+          console.log('디버깅: localStorage 접근 시도');
+          const allKeys = Object.keys(localStorage);
+          console.log('모든 localStorage 키:', allKeys);
+          
+          // playentry_token 키 확인
+          const token = localStorage.getItem('playentry_token');
+          if (token) {
+            console.log('playentry_token 존재함:', token.substring(0, 10) + '...');
+          } else {
+            console.log('playentry_token 키가 없음');
+            
+            // playentry 관련 키 확인
+            const entryKeys = allKeys.filter(k => k.toLowerCase().includes('playentry') || k.toLowerCase().includes('entry'));
+            if (entryKeys.length > 0) {
+              console.log('playentry 관련 키:', entryKeys);
+              for (let i = 0; i < entryKeys.length; i++) {
+                const k = entryKeys[i];
+                const value = localStorage.getItem(k);
+                if (value) {
+                  console.log('키: ' + k + ', 값: ' + value.substring(0, 10) + '...');
+                } else {
+                  console.log('키: ' + k + ', 값: null 또는 빈 문자열');
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('localStorage 접근 오류:', e);
+        }
+      }
+
+      // 토큰 추출 함수
+      function extractTokens() {
+        // CSRF 토큰 가져오기
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        console.log('Meta CSRF token:', csrfToken);
+        
+        // X-Token 가져오기
+        let xToken = '';
+        try {
+          xToken = localStorage.getItem('playentry_token') || '';
+          
+          // 다른 키 확인
+          if (!xToken) {
+            const allKeys = Object.keys(localStorage);
+            const entryKeys = allKeys.filter(function(k) {
+              return k.toLowerCase().includes('token') || k.toLowerCase().includes('entry');
+            });
+            
+            for (let i = 0; i < entryKeys.length; i++) {
+              const key = entryKeys[i];
+              const value = localStorage.getItem(key);
+              if (value) {
+                console.log('시도: ' + key + ' = ' + value.substring(0, 10) + '...');
+                if (value.length > 20) {
+                  xToken = value;
+                  console.log('대체 토큰 발견: ' + key);
+                  break;
+                }
+              } else {
+                console.log('시도: ' + key + ' = null 또는 빈 문자열');
+              }
+            }
+          }
+        } catch (e) {
+          console.error('localStorage 접근 오류:', e);
+        }
+        
+        return { csrfToken, xToken };
+      }
+
+      // 페이지 로드 시 실행
       window.addEventListener('DOMContentLoaded', function() {
+        console.log('DOM 로드됨, 토큰 추출 시도');
         const playtokenField = document.getElementById('playentry_token');
-        const token = localStorage.getItem('playentry_token');
-        if (token) {
-          playtokenField.value = token;
-          console.log('Token loaded from localStorage');
+        
+        // 디버깅
+        debugLocalStorage();
+        
+        // 토큰 추출
+        const tokens = extractTokens();
+        if (tokens.xToken) {
+          playtokenField.value = tokens.xToken;
+          console.log('토큰 설정됨:', tokens.xToken.substring(0, 10) + '...');
         } else {
-          console.log('No token found in localStorage');
+          console.log('토큰을 찾을 수 없음');
+          playtokenField.placeholder = '토큰을 찾을 수 없습니다. Entry 사이트에 로그인 후 다시 시도하세요.';
         }
       });
     </script>
